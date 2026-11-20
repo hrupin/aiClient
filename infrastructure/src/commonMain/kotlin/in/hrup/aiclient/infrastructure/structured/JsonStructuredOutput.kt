@@ -45,7 +45,7 @@ internal class JsonStructuredOutput(format: JsonResponseFormat) {
     }
 }
 
-private fun JsonObject.toAiObject(): AiValue.Object =
+internal fun JsonObject.toAiObject(): AiValue.Object =
     AiValue.Object(mapValues { (_, value) -> value.toAiValue() })
 
 private fun JsonElement.toAiValue(): AiValue = when (this) {
@@ -59,7 +59,7 @@ private fun JsonElement.toAiValue(): AiValue = when (this) {
 }
 
 @OptIn(ExperimentalSerializationApi::class)
-private fun AiValue.toJson(): JsonElement = when (this) {
+internal fun AiValue.toJson(): JsonElement = when (this) {
     is AiValue.Object -> JsonObject(fields.mapValues { (_, value) -> value.toJson() })
     is AiValue.Array -> JsonArray(values.map { it.toJson() })
     is AiValue.Text -> JsonPrimitive(value)

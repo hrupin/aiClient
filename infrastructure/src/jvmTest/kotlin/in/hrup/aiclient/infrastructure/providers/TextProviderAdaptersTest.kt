@@ -12,6 +12,7 @@ import `in`.hrup.aiclient.model.conversation.AiMessage
 import `in`.hrup.aiclient.model.conversation.AiRole
 import `in`.hrup.aiclient.model.generation.AiModel
 import `in`.hrup.aiclient.model.generation.AiRequest
+import `in`.hrup.aiclient.model.generation.AiStreamEvent
 import `in`.hrup.aiclient.model.generation.AiUsage
 import `in`.hrup.aiclient.model.generation.StructuredOutputException
 import `in`.hrup.aiclient.model.value.AiValue
@@ -164,6 +165,52 @@ class TextProviderAdaptersTest {
                     provider.stream(request("test-model").copy(responseFormat = format)).toList()
                 }
                 assertTrue(error.violations.isNotEmpty())
+            }
+        }
+    }
+
+    @Test
+    fun kimiK3ReturnsTheValidatedObjectFromASingletonArray() = runBlocking {
+        val request = request("kimi-k3").copy(responseFormat = format)
+        val expectedText = """{"value":42}"""
+        HttpClient(MockEngine { call ->
+            assertRequest(
+                call,
+                "https://api.moonshot.ai/v1/chat/completions",
+                """{"model":"kimi-k3","messages":$messages,"response_format":{"type":"json_schema","json_schema":{"name":"result","schema":$schema,"strict":true}}}""",
+            )
+            respond(chatOutput("[$expectedText]"))
+        }).use { client ->
+            val response = KimiChatProvider(HttpTransport(client), "test-key").generate(request)
+            assertEquals(expectedOutput, response.structuredOutput)
+            assertEquals(listOf(AiContentPart.Text(expectedText)), assertIs<AiMessage>(response.output.single()).content)
+        }
+
+        val frames = listOf(" ", "[", expectedText, "]").map { delta ->
+            """{"choices":[{"index":0,"delta":{"content":${JsonPrimitive(delta)}}}]}"""
+        } + listOf("""{"choices":[{"index":0,"finish_reason":"stop"}]}""", "[DONE]")
+        HttpClient(MockEngine {
+            respond(
+                frames.joinToString("") { "data: $it\n\n" },
+                headers = headersOf(HttpHeaders.ContentType, "text/event-stream"),
+            )
+        }).use { client ->
+            val events = KimiChatProvider(HttpTransport(client), "test-key").stream(request).toList()
+            assertEquals(expectedText, events.filterIsInstance<AiStreamEvent.TextDelta>().joinToString("") { it.text })
+            val response = assertIs<AiStreamEvent.Completed>(events.last()).response
+            assertEquals(expectedOutput, response.structuredOutput)
+            assertEquals(listOf(AiContentPart.Text(expectedText)), assertIs<AiMessage>(response.output.single()).content)
+        }
+    }
+
+    @Test
+    fun kimiK3StillRejectsInvalidObjectsAndAmbiguousArrays() = runBlocking {
+        val request = request("kimi-k3").copy(responseFormat = format)
+        for (body in listOf("""[{"value":"42"}]""", """[{"value":42},{"value":43}]""")) {
+            HttpClient(MockEngine { respond(chatOutput(body)) }).use { client ->
+                assertFailsWith<StructuredOutputException> {
+                    KimiChatProvider(HttpTransport(client), "test-key").generate(request)
+                }
             }
         }
     }

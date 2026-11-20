@@ -2,6 +2,9 @@ package `in`.hrup.aiclient.infrastructure.providers
 
 import `in`.hrup.aiclient.infrastructure.http.HttpTransport
 import `in`.hrup.aiclient.infrastructure.http.createHttpClient
+import `in`.hrup.aiclient.infrastructure.mcp.McpAvailableTool
+import `in`.hrup.aiclient.infrastructure.mcp.generateWithMcpTools
+import `in`.hrup.aiclient.infrastructure.mcp.streamWithMcpTools
 import `in`.hrup.aiclient.infrastructure.providers.deepseek.DeepSeekResponsesProvider
 import `in`.hrup.aiclient.infrastructure.providers.kimi.KimiChatProvider
 import `in`.hrup.aiclient.infrastructure.providers.openai.loadOpenAiLiveSettings
@@ -112,26 +115,33 @@ internal suspend fun generateLive(
     defaultModel: String,
     responseFormat: JsonResponseFormat? = null,
     streaming: Boolean = false,
+    exactModel: Boolean = false,
+    promptOverride: String? = null,
+    mcpTools: List<McpAvailableTool> = emptyList(),
+    expectedStructured: AiValue.Object? = AiValue.Object(mapOf("value" to AiValue.Number("42"))),
+    expectedTextFragments: List<String> = emptyList(),
     createProvider: (HttpTransport, String) -> StreamingAiProvider,
 ) {
     val env = readLiveEnv()
+    val keyName = "${prefix}_API_KEY"
     val modelName = "${prefix}_MODEL"
-    val modelOverride = liveSetting(System.getProperty("aiModel"), System.getenv(modelName), env[modelName])
-    val (apiKey, model) = if (prefix == "OPENAI") {
+    val (apiKey, model) = if (prefix == "OPENAI" && !exactModel) {
         val (key, openAiModel) = loadOpenAiLiveSettings()
+        val modelOverride = liveSetting(System.getProperty("aiModel"), System.getenv(modelName), env[modelName])
         key to (modelOverride ?: openAiModel)
     } else {
-        val keyName = "${prefix}_API_KEY"
         val key = checkNotNull(liveSetting(System.getenv(keyName), env[keyName])) {
             "Set $keyName in .env or in the environment before running this test"
         }
+        val modelOverride = if (exactModel) null
+            else liveSetting(System.getProperty("aiModel"), System.getenv(modelName), env[modelName])
         key to (modelOverride ?: defaultModel)
     }
     val prompt = if (responseFormat == null) "What is 6 times 7? Answer in one short sentence."
-        else "What is 6 times 7? Return a JSON object with the answer as the integer value."
+        else "Calculate 6 times 7. Return only a JSON object with one property named \"value\", set to the resulting integer. The root value must be an object, never an array."
     val request = AiRequest(
         model = AiModel(model),
-        input = listOf(AiMessage(AiRole.USER, listOf(AiContentPart.Text(prompt)))),
+        input = listOf(AiMessage(AiRole.USER, listOf(AiContentPart.Text(promptOverride ?: prompt)))),
         responseFormat = responseFormat,
     )
 
@@ -139,7 +149,7 @@ internal suspend fun generateLive(
         val provider = createProvider(HttpTransport(client), apiKey)
         val response = withTimeout(90_000) {
             if (streaming) {
-                val events = provider.stream(request).toList()
+                val events = provider.streamWithMcpTools(request, mcpTools).toList()
                 val completed = assertIs<AiStreamEvent.Completed>(events.last()).response
                 val deltas = events.filterIsInstance<AiStreamEvent.TextDelta>()
                 assertTrue(deltas.isNotEmpty(), "Expected streamed text from $prefix")
@@ -150,7 +160,7 @@ internal suspend fun generateLive(
                 )
                 completed
             } else {
-                provider.generate(request)
+                provider.generateWithMcpTools(request, mcpTools)
             }
         }
         val text = response.output.filterIsInstance<AiMessage>().joinToString("\n") { message ->
@@ -158,8 +168,10 @@ internal suspend fun generateLive(
         }
         println(text)
         assertTrue(text.isNotBlank(), "Expected a non-empty response from $prefix")
+        expectedTextFragments.forEach { assertTrue(it in text, "Expected $prefix to preserve $it") }
         if (responseFormat != null) {
-            assertEquals(AiValue.Object(mapOf("value" to AiValue.Number("42"))), response.structuredOutput)
+            val structured = assertIs<AiValue.Object>(response.structuredOutput)
+            expectedStructured?.let { assertEquals(it, structured) }
         }
     }
 }

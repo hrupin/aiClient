@@ -49,8 +49,12 @@ kotlin {
                 testLogging.showStandardStreams = true
                 if (taskName == "providerMatrixIntegrationTest") {
                     reports.junitXml.isOutputPerTestCase = true
+                    providers.gradleProperty("aiMcpUrl").orNull?.let { systemProperty("aiMcpUrl", it) }
                     providers.gradleProperty("aiClientMatrixResults").orNull?.let {
-                        reports.junitXml.outputLocation.set(file(it))
+                        val output = file(it)
+                        reports.junitXml.outputLocation.set(output)
+                        reports.html.outputLocation.set(output.resolve("html"))
+                        binaryResultsDirectory.set(output.resolve("binary"))
                     }
                 }
                 workingDir(rootProject.layout.projectDirectory.asFile)
@@ -70,6 +74,7 @@ kotlin {
             jvmTarget = JvmTarget.JVM_11
         }
         withHostTest {}
+        withSourcesJar()
     }
 
     sourceSets {

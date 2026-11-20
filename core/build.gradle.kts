@@ -18,6 +18,7 @@ kotlin {
             jvmTarget = JvmTarget.JVM_11
         }
         withHostTest {}
+        withSourcesJar()
     }
     sourceSets {
         commonMain.dependencies {

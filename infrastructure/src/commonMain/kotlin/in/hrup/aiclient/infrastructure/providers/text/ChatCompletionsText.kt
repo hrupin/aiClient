@@ -14,8 +14,11 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 
-internal class ChatCompletionsText(private val http: TextProviderHttp) {
-    suspend fun generate(request: AiRequest): AiResponse {
+internal class ChatCompletionsText(
+    private val http: TextProviderHttp,
+    private val nativeSchemaModels: Set<String> = emptySet(),
+) {
+    suspend fun generate(request: AiRequest, normalizeStructured: ((String) -> String)? = null): AiResponse {
         val structured = request.responseFormat?.let(::JsonStructuredOutput)
         val payload = request.toPayload(structured)
         val response = http.post(http.json.encodeToString(payload))
@@ -27,14 +30,18 @@ internal class ChatCompletionsText(private val http: TextProviderHttp) {
             response.fail("${http.provider} response finished with ${choice.finishReason}", choice.finishReason)
         }
         val text = choice.message.content ?: response.fail("${http.provider} response is missing output text")
-        return response.toAiResponse(listOf(listOf(text)), decoded.usage?.toAiUsage(), structured)
+        val output = if (structured != null && normalizeStructured != null) normalizeStructured(text) else text
+        return response.toAiResponse(listOf(listOf(output)), decoded.usage?.toAiUsage(), structured)
     }
 
-    fun stream(request: AiRequest): Flow<AiStreamEvent> = flow {
+    fun stream(request: AiRequest, normalizeStructured: ((String) -> String)? = null): Flow<AiStreamEvent> = flow {
         val structured = request.responseFormat?.let(::JsonStructuredOutput)
         val payload = request.toPayload(structured).copy(stream = true)
         val response = http.streamResponse()
         val text = StringBuilder()
+        val normalize = normalizeStructured.takeIf { structured != null }
+        // Wait for the first non-whitespace character before deciding whether to emit raw deltas.
+        var streamAsReceived: Boolean? = if (normalize == null) true else null
         var usage: AiUsage? = null
         var stopped = false
         var done = false
@@ -57,13 +64,23 @@ internal class ChatCompletionsText(private val http: TextProviderHttp) {
                 }
                 choice.delta?.content?.takeIf(String::isNotEmpty)?.let { delta ->
                     text.append(delta)
-                    emit(AiStreamEvent.TextDelta(0, 0, delta))
+                    when (streamAsReceived) {
+                        true -> emit(AiStreamEvent.TextDelta(0, 0, delta))
+                        false -> Unit
+                        null -> delta.firstOrNull { !it.isWhitespace() }?.let { first ->
+                            streamAsReceived = first == '{'
+                            if (first == '{') emit(AiStreamEvent.TextDelta(0, 0, text.toString()))
+                        }
+                    }
                 }
             }
         }
         if (!done || !stopped) response.fail("${http.provider} stream ended before successful completion")
         if (text.isEmpty()) response.fail("${http.provider} stream is missing output text")
-        val result = response.toAiResponse(listOf(listOf(text.toString())), usage, structured)
+        val received = text.toString()
+        val output = normalize?.invoke(received) ?: received
+        val result = response.toAiResponse(listOf(listOf(output)), usage, structured)
+        if (streamAsReceived != true) emit(AiStreamEvent.TextDelta(0, 0, output))
         emit(AiStreamEvent.OutputItemCompleted(0, result.output.single()))
         emit(AiStreamEvent.Completed(result))
     }
@@ -72,6 +89,12 @@ internal class ChatCompletionsText(private val http: TextProviderHttp) {
         val messages = textMessages(http.provider)
         return if (structured == null) {
             ChatRequest(model.id, messages)
+        } else if (model.id in nativeSchemaModels) {
+            ChatRequest(
+                model.id,
+                messages,
+                ChatResponseFormat("json_schema", ChatJsonSchema(requireNotNull(responseFormat).name, structured.definition, strict = true)),
+            )
         } else {
             val instruction = TextMessage(
                 role = "system",
@@ -92,7 +115,17 @@ private data class ChatRequest(
 )
 
 @Serializable
-private data class ChatResponseFormat(val type: String)
+private data class ChatResponseFormat(
+    val type: String,
+    @SerialName("json_schema") val jsonSchema: ChatJsonSchema? = null,
+)
+
+@Serializable
+private data class ChatJsonSchema(
+    val name: String,
+    val schema: JsonObject,
+    val strict: Boolean,
+)
 
 @Serializable
 private data class ChatResponse(val choices: List<ChatChoice>, val usage: TextUsage? = null)

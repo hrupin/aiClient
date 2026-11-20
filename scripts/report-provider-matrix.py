@@ -5,13 +5,16 @@ import sys
 from xml.etree import ElementTree
 
 
-PROVIDERS = ("OPENAI", "DEEPSEEK", "XAI", "ZAI", "KIMI", "PERPLEXITY")
 CASES = {
     "bufferedWithoutSchema": "Обычный / текст",
     "bufferedWithSchema": "Обычный / JSON Schema",
     "streamingWithoutSchema": "Поток / текст",
     "streamingWithSchema": "Поток / JSON Schema",
 }
+CASES.update({
+    "mcp" + method[0].upper() + method[1:]: "MCP / " + title
+    for method, title in CASES.items()
+})
 
 
 def summarize(case):
@@ -19,7 +22,8 @@ def summarize(case):
     if failed is None:
         failed = case.find("error")
     if failed is not None:
-        return "FAIL", failed.get("message", "").split("\n", 1)[0]
+        message = failed.get("message", "").split("\n", 1)[0]
+        return "FAIL", message.partition(": ")[2] or message
     if case.find("skipped") is not None:
         return "SKIP", ""
     return "PASS", (case.findtext("system-out") or "").strip()
@@ -31,23 +35,24 @@ def read_results(directory):
         for case in ElementTree.parse(report).getroot().iter("testcase"):
             match = re.fullmatch(r"([^\[]+)\[([^\]]+)\]", case.get("name", ""))
             if match:
-                method, provider = match.groups()
-                if method in CASES and provider in PROVIDERS:
-                    results[provider, method] = summarize(case)
+                method, label = match.groups()
+                provider, separator, model = label.partition("/")
+                if method in CASES and separator:
+                    results[provider, model, method] = summarize(case)
     return results
 
 
 def print_table(results):
-    rows = [["Провайдер", "Режим", "Статус", "Результат"]]
+    rows = [["Провайдер", "Модель", "Режим", "Статус", "Результат"]]
     totals = Counter()
-    for provider in PROVIDERS:
+    for provider, model in dict.fromkeys((provider, model) for provider, model, _ in results):
         for method, title in CASES.items():
-            status, result = results.get((provider, method), ("NOT RUN", ""))
+            status, result = results.get((provider, model, method), ("NOT RUN", ""))
             totals[status] += 1
             result = " ".join(result.split())
             if len(result) > 80:
                 result = result[:79] + "…"
-            rows.append([provider, title, status, result or "—"])
+            rows.append([provider, model, title, status, result or "—"])
 
     widths = [max(map(len, column)) for column in zip(*rows)]
     print("\nИтог тестов")
@@ -62,4 +67,6 @@ def print_table(results):
 
 
 if __name__ == "__main__":
-    print_table(read_results(Path(sys.argv[1])))
+    results = read_results(Path(sys.argv[1]))
+    print_table(results)
+    sys.exit(0 if results else 1)

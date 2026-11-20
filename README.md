@@ -1,152 +1,469 @@
 # aiClient
 
-Kotlin Multiplatform library for AI providers.
+aiClient is a Kotlin Multiplatform library for text generation with OpenAI,
+DeepSeek, xAI, Z.ai, Kimi, and Perplexity. It supports request–response
+generation, streaming with Kotlin Flow, Structured Output validated against
+JSON Schema, and tool calls through Local MCP.
 
-- `:core` defines the domain models and contracts.
-- `:application` implements use cases and depends on `:core`.
-- `:infrastructure` implements provider and protocol adapters and depends on `:core`.
+Targets include JVM (server and Desktop), Android (API 24+), iOS arm64, and
+iOS Simulator arm64.
 
-The modules target JVM (including Desktop), Android, iOS ARM64 devices, and iOS ARM64 simulators.
+See the [API reference](docs/api-reference.md) for request and response contracts,
+MCP behavior, and error handling.
 
-## Install from GitHub Packages
+## Installation
 
-Add the library repository to your application's `settings.gradle.kts`. Replace
-`owner/repository` with the lowercase GitHub repository path. For local
-consumption, set `GITHUB_ACTOR` to your GitHub username and `GITHUB_TOKEN` to a
-classic token with `read:packages` and access to the package.
+With `mavenCentral()` in your project's repositories, add this dependency.
+Use `commonMain.dependencies` in a KMP module or the module's
+`dependencies` block in a JVM or Android application.
 
 ```kotlin
-dependencyResolutionManagement {
-    repositories {
-        google()
-        mavenCentral()
-        maven("https://maven.pkg.github.com/owner/repository") {
-            content { includeGroup("in.hrup.aiclient") }
-            credentials {
-                username = providers.environmentVariable("GITHUB_ACTOR").orNull
-                password = providers.environmentVariable("GITHUB_TOKEN").orNull
+implementation("in.hrup.aiclient:kmp:0.1.0")
+```
+
+Use a version available in Maven Central. The `kmp` artifact includes
+`core` as a transitive dependency. For domain models and contracts alone,
+use `implementation("in.hrup.aiclient:core:0.1.0")`.
+
+## Dependency injection
+
+Register an `AiClient` in your application's dependency container. Pass in
+the application configuration and a shared `HttpClient`. The application
+loads secrets and closes the HTTP client at shutdown. You can inject your
+own Ktor client or use `createHttpClient()`, which selects CIO on JVM,
+OkHttp on Android, and Darwin on iOS.
+
+```kotlin
+import `in`.hrup.aiclient.AiClient
+import `in`.hrup.aiclient.AiClientConfig
+import `in`.hrup.aiclient.AiProviderConfig
+import `in`.hrup.aiclient.AiProviderId
+import `in`.hrup.aiclient.McpServerConfig
+import `in`.hrup.aiclient.infrastructure.http.createHttpClient
+
+val httpClient = createHttpClient()
+val ai = AiClient(
+    httpClient = httpClient,
+    config = AiClientConfig(
+        defaultProvider = AiProviderId.OPENAI,
+        providers = mapOf(
+            AiProviderId.OPENAI to AiProviderConfig(apiKey = openAiKey),
+            AiProviderId.KIMI to AiProviderConfig(
+                apiKey = kimiKey,
+                defaultModel = "kimi-k3",
+            ),
+        ),
+        mcpServers = mapOf(
+            "catalog" to McpServerConfig(endpoint = "https://agpt.hrup.in/mcp"),
+        ),
+    ),
+)
+```
+
+The application supplies `openAiKey` and `kimiKey`. Use
+`AiProviderConfig.endpoint` to override the full provider URL. To authenticate
+to an MCP server, pass connection headers to `McpServerConfig`, such as
+`headers = mapOf("Authorization" to "Bearer $mcpToken")`.
+
+OpenAI is the default provider. For prompt-based calls, model selection uses
+the call's `model` argument first, then the configured `defaultModel`, then
+the provider default. Overloads that accept an `AiRequest` use `request.model`.
+
+| Provider | API key setting | Default model |
+| --- | --- | --- |
+| `OPENAI` | `OPENAI_API_KEY` | `gpt-6-luna` |
+| `DEEPSEEK` | `DEEPSEEK_API_KEY` | `deepseek-flash` |
+| `XAI` | `XAI_API_KEY` | `grok-4.7` |
+| `ZAI` | `ZAI_API_KEY` | `glm-5.3` |
+| `KIMI` | `KIMI_API_KEY` | `kimi-k3.1-pro` |
+| `PERPLEXITY` | `PERPLEXITY_API_KEY` | `perplexity/sonar` |
+
+The setting names appear in error messages and are used by live tests.
+Applications supply the values through `AiProviderConfig.apiKey`. Configure
+keys for the providers your application uses. A missing or blank key raises
+`MissingAiApiKeyException` before any network request, when calling
+`generate()` or collecting the flow from `stream()`.
+
+### Model catalog
+
+Read the bundled catalog without credentials or network access.
+
+```kotlin
+import `in`.hrup.aiclient.infrastructure.catalog.providerModelCatalog
+
+val deepSeekModels = providerModelCatalog["deepseek"].orEmpty().map { it.id }
+```
+
+Model availability depends on the provider API and your account. The catalog
+also includes BFL image-generation models. BFL has no text adapter.
+
+## Four generation modes
+
+Run these examples from a suspend context using the configured `ai` above.
+
+### 1. Request–response without a schema
+
+```kotlin
+import `in`.hrup.aiclient.model.conversation.AiContentPart
+import `in`.hrup.aiclient.model.conversation.AiMessage
+
+val response = ai.generate(
+    prompt = "Explain Kotlin Flow in one sentence.",
+    provider = AiProviderId.KIMI,
+    model = "kimi-k3",
+)
+val text = response.output.filterIsInstance<AiMessage>()
+    .flatMap { it.content }
+    .filterIsInstance<AiContentPart.Text>()
+    .joinToString("") { it.text }
+println(text)
+```
+
+### 2. Streaming without a schema
+
+```kotlin
+import `in`.hrup.aiclient.model.generation.AiStreamEvent
+import kotlinx.coroutines.flow.collect
+
+ai.stream("Give three short examples of using Kotlin Flow.").collect { event ->
+    when (event) {
+        is AiStreamEvent.TextDelta -> print(event.text)
+        is AiStreamEvent.OutputItemCompleted -> Unit
+        is AiStreamEvent.Completed -> println("\nTokens: ${event.response.usage?.totalTokens}")
+    }
+}
+```
+
+The flow is cold. Each collection starts a new request, and cancelling the
+collecting coroutine cancels the request. A successful flow ends with
+`Completed`. Failures propagate through the flow.
+
+### 3. Request–response with JSON Schema
+
+```kotlin
+import `in`.hrup.aiclient.infrastructure.structured.parseJsonResponseFormat
+import `in`.hrup.aiclient.model.value.AiValue
+
+val resultFormat = parseJsonResponseFormat(
+    "extraction_result",
+    """
+    {
+      "type": "object",
+      "properties": {
+        "title": {"type": "string"},
+        "tags": {"type": "array", "items": {"type": "string"}},
+        "details": {
+          "type": "object",
+          "properties": {
+            "language": {"type": "string"},
+            "confidence": {"type": "number"},
+            "reviewed": {"type": "boolean"}
+          },
+          "required": ["language", "confidence", "reviewed"],
+          "additionalProperties": false
+        }
+      },
+      "required": ["title", "tags", "details"],
+      "additionalProperties": false
+    }
+    """.trimIndent(),
+)
+
+val extractionPrompt = "Extract a title, tags, and metadata from: An introduction to Kotlin Flow."
+val structured = requireNotNull(
+    ai.generate(extractionPrompt, responseFormat = resultFormat).structuredOutput,
+)
+val title = (structured.fields.getValue("title") as AiValue.Text).value
+println(title)
+```
+
+`structuredOutput` contains a validated `AiValue.Object`. For JSON text,
+read `response.output` using the same approach as in the first example. The
+response root must be an object. A failed validation raises
+`StructuredOutputException`, whose `violations` field contains the schema
+violations when available.
+
+OpenAI, DeepSeek, xAI, Perplexity, and `kimi-k3` receive the schema through
+their API's structured output format. Z.ai and the other Kimi models use JSON
+mode with the schema in the generation instructions. aiClient validates the
+completed result locally in every case. If `kimi-k3` wraps a single object in
+an array, the adapter extracts the object and validates it against the original
+schema.
+
+### 4. Streaming with JSON Schema
+
+```kotlin
+ai.stream(extractionPrompt, responseFormat = resultFormat).collect { event ->
+    when (event) {
+        is AiStreamEvent.TextDelta -> print(event.text)
+        is AiStreamEvent.OutputItemCompleted -> Unit
+        is AiStreamEvent.Completed -> {
+            val validated = requireNotNull(event.response.structuredOutput)
+            println("\nResult fields: ${validated.fields.keys}")
+        }
+    }
+}
+```
+
+Deltas may contain partial JSON. Use `Completed.response.structuredOutput`
+when application logic depends on validated data. If `kimi-k3` starts a
+response with an array wrapper, the adapter collects it before emitting the
+normalized object.
+
+## Conversation roles and history
+
+Use the `AiRequest` overload when you need explicit message roles or a multi-turn
+conversation. Keep the messages in chronological order and store the history in
+your application. For each new turn, add the user's message, send a snapshot of
+the history, and append the assistant messages from the completed response.
+
+| Role | Purpose |
+| --- | --- |
+| `SYSTEM` | Persistent instructions for the conversation. |
+| `DEVELOPER` | Application instructions on adapters and models that support this role, such as OpenAI Responses. |
+| `USER` | A message from the user. |
+| `ASSISTANT` | A previous model response. |
+| `TOOL` | Represented by `AiToolResult` in the domain model. Use the MCP API below to execute tools through `AiClient`. |
+
+### Request–response with history
+
+```kotlin
+import `in`.hrup.aiclient.AiClient
+import `in`.hrup.aiclient.AiProviderId
+import `in`.hrup.aiclient.model.conversation.AiContentPart
+import `in`.hrup.aiclient.model.conversation.AiMessage
+import `in`.hrup.aiclient.model.conversation.AiRole
+import `in`.hrup.aiclient.model.generation.AiModel
+import `in`.hrup.aiclient.model.generation.AiRequest
+
+fun message(role: AiRole, text: String): AiMessage =
+    AiMessage(role, listOf(AiContentPart.Text(text)))
+
+suspend fun chatWithHistory(ai: AiClient): MutableList<AiMessage> {
+    val model = AiModel("gpt-6-luna")
+    val history = mutableListOf(
+        message(AiRole.SYSTEM, "You teach Kotlin to beginners."),
+        message(AiRole.DEVELOPER, "Keep each answer under 100 words."),
+    )
+
+    history += message(AiRole.USER, "What is Kotlin Flow?")
+    val first = ai.generate(
+        request = AiRequest(model = model, input = history.toList()),
+        provider = AiProviderId.OPENAI,
+    )
+    history += first.output.filterIsInstance<AiMessage>()
+        .filter { it.role == AiRole.ASSISTANT }
+
+    history += message(AiRole.USER, "Can you show a small example of that?")
+    val second = ai.generate(
+        request = AiRequest(model = model, input = history.toList()),
+        provider = AiProviderId.OPENAI,
+    )
+    history += second.output.filterIsInstance<AiMessage>()
+        .filter { it.role == AiRole.ASSISTANT }
+    return history
+}
+```
+
+Use `SYSTEM`, `USER`, and `ASSISTANT` for text conversations shared across
+providers. Check role support before including `DEVELOPER` with a different
+provider or model.
+
+### Streaming with history
+
+Pass the same history snapshot to `stream()`. Display text deltas as they arrive
+and append the assistant's message once, from `Completed`.
+
+```kotlin
+import `in`.hrup.aiclient.model.generation.AiStreamEvent
+import kotlinx.coroutines.flow.collect
+
+suspend fun streamNextTurn(ai: AiClient, history: MutableList<AiMessage>) {
+    history += message(AiRole.USER, "How do I cancel collection?")
+    val request = AiRequest(model = AiModel("gpt-6-luna"), input = history.toList())
+
+    ai.stream(request, provider = AiProviderId.OPENAI).collect { event ->
+        when (event) {
+            is AiStreamEvent.TextDelta -> print(event.text)
+            is AiStreamEvent.OutputItemCompleted -> Unit
+            is AiStreamEvent.Completed -> {
+                history += event.response.output.filterIsInstance<AiMessage>()
+                    .filter { it.role == AiRole.ASSISTANT }
             }
         }
     }
 }
 ```
 
-In a KMP module, add the dependency to `commonMain.dependencies`. In a JVM or
-Android application, use the same dependency in the module's `dependencies` block.
+Call `streamNextTurn(ai, chatWithHistory(ai))` to stream a third turn.
+
+To use JSON Schema in either mode, set `responseFormat` on the `AiRequest`.
+You can also pass `mcpTools` to either overload alongside the history.
+
+## Local MCP and request-scoped tools
+
+Register each MCP server by ID in the DI configuration with its URL and
+connection headers. Select the tools separately for each request. In
+`mcpTools`, each key is a configured server ID and each value is the set of
+tool names the model can use for that request. An empty selection makes no
+MCP requests.
 
 ```kotlin
-implementation("in.hrup.aiclient:kmp:0.1.0")
+val catalogTools = mapOf("catalog" to setOf("get_available_models"))
+val prompt = "Use MCP to list models. Return the ID and provider of the first model."
+
+val modelFormat = parseJsonResponseFormat(
+    "model",
+    """
+    {
+      "type": "object",
+      "properties": {
+        "id": {"type": "string"},
+        "provider": {"type": "string"}
+      },
+      "required": ["id", "provider"],
+      "additionalProperties": false
+    }
+    """.trimIndent(),
+)
+
+// Request–response with text or JSON Schema.
+val answer = ai.generate(prompt, mcpTools = catalogTools)
+val jsonAnswer = ai.generate(prompt, responseFormat = modelFormat, mcpTools = catalogTools)
+
+// Streaming with text or JSON Schema. Collect the chosen flow to start the request.
+val textEvents = ai.stream(prompt, mcpTools = catalogTools)
+val jsonEvents = ai.stream(prompt, responseFormat = modelFormat, mcpTools = catalogTools)
 ```
 
-`kmp` brings in `core` transitively. If you only need the domain API,
-use `in.hrup.aiclient:core:0.1.0`.
+aiClient uses `tools/list` to discover definitions and filters them to the
+requested names. A separate structured generation lets the model select one
+tool and its arguments, or skip tool use. The library checks the name and
+validates the arguments against the tool's `inputSchema` before executing
+`tools/call`. It then passes the result to the model. In streaming mode the
+final answer starts streaming after tool selection and execution. Both model
+requests use the selected provider and model.
 
-```kotlin
-import `in`.hrup.aiclient.infrastructure.catalog.providerModelCatalog
+A request can use tools from several configured servers. Available tool names
+must be unique across those servers. Set the tools for each request according
+to the user's permissions and the task.
 
-val modelIds = providerModelCatalog["deepseek"].orEmpty().map { it.id }
-```
+When using an adapter directly, the `in.hrup.aiclient.infrastructure.mcp`
+package provides `StreamableHttpMcpClient`, `generateWithMcpTools()`, and
+`streamWithMcpTools()` for model-selected tools. Use `generateWithMcp()`
+or `streamWithMcp()` with `McpToolInvocation` for explicit tool calls.
+The public `AiClient` uses Local MCP. An opt-in integration test covers
+OpenAI Remote MCP.
 
-## Publish a release
+## Error handling
 
-Set the release version in `gradle.properties`. In the GitHub repository that
-contains this project, run **Actions → Publish aiClient → Run workflow**.
-It publishes `core` and `kmp` with Gradle metadata and their JVM,
-Android and iOS variants. Use a new version for each publication.
+| Error | When it occurs |
+| --- | --- |
+| `MissingAiApiKeyException` | The selected provider has no configured API key. The `provider` property identifies the provider. |
+| `StructuredOutputException` | Model output or tool arguments failed JSON Schema validation. |
+| `McpException` | The MCP protocol or tool call failed, or the model selected an unavailable tool. |
+| `OpenAiResponsesException`, `DeepSeekResponsesException`, `ProviderResponseException` | The provider returned an error. These exceptions carry an HTTP status and, when available, a request ID and provider error code. |
+| `IllegalArgumentException` | An invalid call parameter was supplied, such as an unknown MCP server ID. |
 
-To validate locally, run `./gradlew publishToMavenLocal` and use `mavenLocal()`
-in the consumer's repository configuration.
+Network failures can propagate as Ktor exceptions. The calling coroutine
+controls cancellation.
 
-## Development
+## Tests
 
-Check the build on an Apple Silicon Mac with JDK 21, Android SDK 37, and Xcode:
+Regular JVM tests use local test doubles and run without API keys or network
+requests.
 
 ```sh
-./gradlew projects
-./gradlew compileCommonMainKotlinMetadata compileKotlinJvm compileAndroidMain compileKotlinIosArm64 compileKotlinIosSimulatorArm64
+./gradlew jvmTest
+```
+
+For live tests, supply the keys from the provider table through the environment
+or the Git-ignored `.env` file in the repository root.
+
+```sh
+# All models in the catalog
+./scripts/test-provider-matrix.sh
+
+# All eight scenarios for one model
+./scripts/test-provider-matrix.sh --tests '*[KIMI/kimi-k3]'
+
+# Four MCP scenarios for one model using a real MCP server
+./scripts/test-provider-matrix.sh -PaiMcpUrl=https://agpt.hrup.in/mcp \
+  --tests '*mcp*[KIMI/kimi-k3]'
+```
+
+The script requires Python 3. It checks four modes without MCP and four with MCP
+for every text model. By default, MCP calls use a simulated server and AI calls
+use the live APIs. The `fixture-model` and `fixture-provider` values come
+from the simulated server. Use `-PaiMcpUrl` to run the MCP scenarios against
+a real server. BFL rows are marked `SKIP`. The summary shows provider, model,
+mode, status, and response or error. The script exits with a nonzero status if
+a check fails.
+
+You can also run individual integration tasks.
+
+| Provider or scenario | Gradle task |
+| --- | --- |
+| OpenAI | `:infrastructure:openAiIntegrationTest` |
+| DeepSeek | `:infrastructure:deepSeekIntegrationTest` |
+| xAI | `:infrastructure:xaiIntegrationTest` |
+| Z.ai | `:infrastructure:zaiIntegrationTest` |
+| Kimi | `:infrastructure:kimiIntegrationTest` |
+| Perplexity | `:infrastructure:perplexityIntegrationTest` |
+| MCP tool discovery | `:infrastructure:mcpToolsIntegrationTest` |
+| OpenAI Remote MCP with Structured Output | `:infrastructure:openAiRemoteMcpIntegrationTest` |
+
+Use `-PaiModel` to select a model in an individual provider integration test.
+
+```sh
+./gradlew :infrastructure:kimiIntegrationTest -PaiModel=kimi-k3
+```
+
+## Development and publishing
+
+- `:core` contains domain models and contracts. It has no Ktor or
+  kotlinx.serialization dependencies.
+- `:application` is reserved for application use cases and depends on `:core`.
+- `:infrastructure` contains the public client, provider adapters,
+  Ktor transport, MCP implementation, and local JSON Schema validation. It
+  depends on `:core` and is published as `kmp`.
+
+To verify all targets on Apple Silicon, use JDK 21, Android SDK 37, and Xcode.
+
+```sh
+./gradlew compileCommonMainKotlinMetadata compileKotlinJvm compileAndroidMain \
+  compileKotlinIosArm64 compileKotlinIosSimulatorArm64
 ./gradlew jvmTest testAndroidHostTest iosSimulatorArm64Test
 ```
 
-### Live OpenAI integration test
+For local publishing, run `./gradlew publishToMavenLocal` and add
+`mavenLocal()` to the consumer's repositories.
 
-Set `OPENAI_API_KEY` in the ignored `.env` file at the project root or in the environment.
-The test defaults to provider `openai` and model `gpt-6-luna`.
+### Release to Maven Central
 
-OpenAI model IDs for this test include `gpt-6-luna`, `gpt-6.1-terra`,
-`gpt-6.2-sol`, and `gpt-6.2-astra`. See the [OpenAI model catalog](https://developers.openai.com/api/docs/models).
+Verify a namespace that covers `in.hrup.aiclient` in the Sonatype Central
+Portal. Choose the project's distribution license and configure its name and
+URL before releasing. See the [namespace verification guide](https://central.sonatype.org/register/namespace/).
 
-```sh
-./gradlew :infrastructure:openAiIntegrationTest
-./gradlew :infrastructure:openAiIntegrationTest -PaiProvider=openai -PaiModel=gpt-6.2-sol
-```
+Set these GitHub repository secrets and variables.
 
-Command-line properties take precedence over `AI_PROVIDER` and `AI_MODEL`
-in the environment, which take precedence over values in `.env`.
-OpenAI is currently the available provider. The selected model must support Structured Outputs.
+| Setting | Location | Value |
+| --- | --- | --- |
+| `CENTRAL_USERNAME` | Actions secret | Central Portal user token username |
+| `CENTRAL_PASSWORD` | Actions secret | Central Portal user token password |
+| `CENTRAL_SIGNING_KEY` | Actions secret | ASCII-armored PGP private key for release signing |
+| `CENTRAL_SIGNING_PASSWORD` | Actions secret | Passphrase for the signing key, if required |
+| `CENTRAL_LICENSE_NAME` | Actions variable | Name of the project's distribution license |
+| `CENTRAL_LICENSE_URL` | Actions variable | URL of the project's distribution license |
 
-This task sends one request to the OpenAI API and checks the validated result.
-The regular `jvmTest` task uses local test doubles and needs no API credentials.
-
-### Live MCP tools test
-
-```sh
-./gradlew :infrastructure:mcpToolsIntegrationTest
-```
-
-The test queries `https://agpt.hrup.in/mcp` with `tools/list`, validates the list,
-and prints each tool's metadata and input schema. It runs only when requested.
-
-### Live OpenAI Remote MCP test
-
-```sh
-./gradlew :infrastructure:openAiRemoteMcpIntegrationTest
-```
-
-This test uses the same OpenAI settings as `openAiIntegrationTest`. It allows
-only `get_available_models` on the MCP server, checks the tool call in the
-Responses output, and validates and prints the generated model list.
-
-### Live DeepSeek, xAI, Z.ai, Kimi and Perplexity tests
-
-Set the key in the root `.env` file or in the environment, then run the
-corresponding task. Each task prints the provider's response to the console.
-
-| Gradle task | Environment key | Default model | Output |
-| --- | --- | --- | --- |
-| `:infrastructure:deepSeekIntegrationTest` | `DEEPSEEK_API_KEY` | `deepseek-flash` | Validated JSON |
-| `:infrastructure:xaiIntegrationTest` | `XAI_API_KEY` | `grok-4.7` | Validated JSON |
-| `:infrastructure:zaiIntegrationTest` | `ZAI_API_KEY` | `glm-5.3` | Validated JSON |
-| `:infrastructure:kimiIntegrationTest` | `KIMI_API_KEY` | `kimi-k3.1-pro` | Validated JSON |
-| `:infrastructure:perplexityIntegrationTest` | `PERPLEXITY_API_KEY` | `perplexity/sonar` | Validated JSON |
-
-Override the model with `-PaiModel=...` or the provider-specific setting
-`DEEPSEEK_MODEL`, `XAI_MODEL`, `ZAI_MODEL`, `KIMI_MODEL`, or `PERPLEXITY_MODEL`.
-For Z.ai and Kimi, the adapter includes the schema in its generation instructions
-and validates the completed JSON locally before returning it.
-
-All six text adapters implement `StreamingAiProvider`. Use `stream()` for
-text deltas and a final `Completed` event. Use `generate()` for Structured Output.
-To run only the streaming check for a provider, filter its integration task:
-
-```sh
-./gradlew :infrastructure:xaiIntegrationTest --tests '*streamsText'
-```
-
-### Run the provider test matrix
-
-```sh
-./scripts/test-provider-matrix.sh
-```
-
-The script requires Python 3 and runs four live cases per provider: buffered text,
-buffered JSON Schema output, streamed text, and streamed JSON Schema output.
-Structured results are validated locally before the final response is returned.
-The final table shows the result or error for each case. A failed check makes
-the script exit nonzero. To run just the streamed JSON Schema cases:
-
-```sh
-./scripts/test-provider-matrix.sh --tests '*streamingWithSchema*'
-```
+Publish the corresponding public signing key to a [supported keyserver](https://central.sonatype.org/publish/requirements/gpg/).
+Set a new release version in `aiClientVersion` in `gradle.properties`, then
+select **Actions → Publish aiClient to Maven Central → Run workflow**.
+The workflow runs JVM tests, signs the Maven publications, and uploads one
+bundle with `core`, `kmp`, and their JVM, Android, iOS arm64, and iOS
+Simulator arm64 variants. It reports success when Central Portal reports
+`PUBLISHED`. Use the published version in consumer projects once it appears
+in Maven Central.
 
 ## License
 

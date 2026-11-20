@@ -177,8 +177,8 @@ val title = (structured.fields.getValue("title") as AiValue.Text).value
 println(title)
 ```
 
-`structuredOutput` contains a validated `AiValue.Object`. For JSON text,
-read `response.output` using the same approach as in the first example. The
+`structuredOutput` contains a validated `AiValue.Object`. Read `content` for
+the validated JSON as text. The
 response root must be an object. A failed validation raises
 `StructuredOutputException`, whose `violations` field contains the schema
 violations when available.
@@ -209,6 +209,61 @@ Deltas may contain partial JSON. Use `Completed.response.structuredOutput`
 when application logic depends on validated data. If `kimi-k3` starts a
 response with an array wrapper, the adapter collects it before emitting the
 normalized object.
+
+## Final results and provider logging
+
+`generate()` returns an `AiResponse`. A successful `stream()` exposes the same
+type in `AiStreamEvent.Completed.response`. Use `content` for the final assistant
+text or validated JSON, and use `request` and `response` for diagnostics.
+
+| Field | Value |
+| --- | --- |
+| `content` | Final assistant text or validated JSON text. |
+| `request` | The JSON body actually sent to the AI provider. |
+| `response` | The original provider response body, including received SSE frames through completion for streaming calls. |
+| `provider`, `model` | Provider ID and the requested model ID. |
+| `tokensSent`, `tokensReceived` | Provider-reported input and output tokens for final generation. Each count defaults to zero if absent. |
+| `structuredOutput` | The validated `AiValue.Object` when a response schema was requested. |
+
+The example uses a logging callback so the application controls where to store
+provider payloads and how to redact them.
+
+```kotlin
+import `in`.hrup.aiclient.AiClient
+import `in`.hrup.aiclient.model.generation.AiResponse
+import `in`.hrup.aiclient.model.generation.AiStreamEvent
+import kotlinx.coroutines.flow.collect
+
+private fun logExchange(result: AiResponse, log: (String) -> Unit) {
+    log("Provider ${result.provider}, model ${result.model}")
+    log("Input tokens ${result.tokensSent}, output tokens ${result.tokensReceived}")
+    log("Request body: ${result.request}")
+    log("Response body: ${result.response}")
+}
+
+suspend fun generateAndLog(ai: AiClient, log: (String) -> Unit): String {
+    val result = ai.generate("Explain Kotlin Flow in one sentence.")
+    logExchange(result, log)
+    return result.content
+}
+
+suspend fun streamAndLog(ai: AiClient, log: (String) -> Unit) {
+    ai.stream("Explain Kotlin Flow in one sentence.").collect { event ->
+        when (event) {
+            is AiStreamEvent.TextDelta -> print(event.text)
+            is AiStreamEvent.OutputItemCompleted -> Unit
+            is AiStreamEvent.Completed -> logExchange(event.response, log)
+        }
+    }
+}
+```
+
+These fields capture the final provider exchange. With Local MCP, the final
+request body includes the tool result when a tool runs. HTTP headers and separate
+tool-selection and MCP exchanges are outside these fields. Provider bodies may
+contain user and tool data, so redact sensitive content before persisting logs.
+See the [API reference](docs/api-reference.md#provider-exchange-capture) for
+details about the capture behavior.
 
 ## Conversation roles and history
 

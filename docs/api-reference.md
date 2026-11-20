@@ -81,11 +81,26 @@ an empty `AiRequest.tools` list. Use the `mcpTools` argument for Local MCP.
 A collection can emit text before a subsequent error. Wait for `Completed`
 before treating a streamed structured result as valid.
 
-The captured exchange includes the final generation request and response.
-For Local MCP, the final request includes the tool result when a tool ran.
-Heads, authentication headers, and separate tool-selection or MCP exchanges
-are outside these body fields. The fields can contain prompts, completions,
-and tool data. Apply your application's logging policy before persisting them.
+### Provider exchange capture
+
+The capture fields are populated for successful calls through `AiClient`.
+`request` contains the provider-specific JSON body, including fields such as
+messages, model ID, schema configuration, and streaming options when sent.
+`response` retains fields in the provider body even when the adapter does not
+map them into `output` or `usage`. For streaming, it retains the received SSE
+body through completion, including the event framing. Use `content` for the
+assembled assistant result and `structuredOutput` for a typed JSON object.
+
+For Local MCP, the final generation body includes the tool result when a
+tool ran. The model's separate tool-selection exchange, MCP server traffic,
+and HTTP headers are outside the capture fields. Token counters refer to the
+final generation. Inspect `usage` to distinguish a reported zero from an
+absent counter.
+
+An errored or cancelled stream has no successful `Completed` response to log
+through this API. The capture retains the response body in memory, including
+received SSE frames. Apply your application's retention and redaction rules
+before persisting bodies that may contain prompt, completion, or tool data.
 
 ## Structured Output
 

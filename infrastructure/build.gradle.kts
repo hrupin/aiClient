@@ -24,6 +24,7 @@ kotlin {
             "openAiIntegrationTest" to "$openAiTestPackage.OpenAiLiveIntegrationTest",
             "openAiVisionIntegrationTest" to "$openAiTestPackage.OpenAiVisionIntegrationTest",
             "providerVisionIntegrationTest" to "$openAiTestPackage.ProviderVisionIntegrationTest",
+            "bflIntegrationTest" to "$liveTextTestPackage.bfl.BflLiveIntegrationTest",
             "mcpToolsIntegrationTest" to "in.hrup.aiclient.infrastructure.mcp.McpToolsIntegrationTest",
             "openAiRemoteMcpIntegrationTest" to "$openAiTestPackage.OpenAiRemoteMcpIntegrationTest",
             "deepSeekIntegrationTest" to "$liveTextTestPackage.DeepSeekLiveIntegrationTest",

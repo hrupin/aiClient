@@ -12,7 +12,7 @@ the behavior of its provider and MCP adapters.
 | `AiClientConfig` | Holds the default provider, provider settings keyed by `AiProviderId`, and MCP connection settings keyed by application-defined server IDs. |
 | `AiProviderConfig` | Holds the API key, optional default model, and optional full endpoint URL. |
 | `McpServerConfig` | Holds the endpoint and connection headers for one MCP server. |
-| `AiProviderId` | Identifies OpenAI, DeepSeek, xAI, Z.ai, Kimi, or Perplexity. Its `apiKeySetting` property gives the key setting name used in diagnostics. |
+| `AiProviderId` | Identifies OpenAI, DeepSeek, xAI, Z.ai, Kimi, Perplexity, or BFL. Its `apiKeySetting` property gives the key setting name used in diagnostics. |
 
 These types are in the `in.hrup.aiclient` package. Kotlin imports escape the
 first segment as `` `in` ``.
@@ -194,6 +194,43 @@ The application owns the underlying HTTP client.
 The public facade uses Local MCP. The opt-in OpenAI Remote MCP integration
 test covers provider-managed MCP separately.
 
+## Image generation
+
+`AiClient.generateImage(prompt, model, outputFormat)` currently uses Black Forest Labs.
+The overload with `images` accepts ordered
+`AiImageSource.Url` or `AiImageSource.Base64` references for editing.
+FLUX 3 receives the references in `images` and accepts up to ten.
+FLUX.2 uses `input_image`, `input_image_2`, and subsequent fields, with
+a limit of eight references or four for FLUX.2 Klein. Base64 data is sent
+as a plain string. An empty list generates an image from the prompt.
+Set `outputFormat` to `AiImageFormat.PNG` or `AiImageFormat.JPEG` for
+generation or editing with FLUX 3 Image Klein and FLUX.2. An explicit format
+with `flux-3-image` raises `IllegalArgumentException` before submission.
+Omit the argument to use the provider default.
+
+The client checks the `BFL_API_KEY` configuration before submitting a request. The
+model argument overrides `AiProviderConfig.defaultModel`, which defaults to
+`flux-3-image`. The endpoint setting is a base URL ending in `/v1`, with
+the model ID appended by the adapter.
+
+The call submits a job and polls the returned URL until BFL reports
+`Ready`. The overall timeout is 120 seconds. Cancelling the coroutine stops
+local polling. A provider HTTP error, terminal task error, or invalid API
+response raises `BflImageException` with the HTTP status and response body.
+
+### Image response fields
+
+| Field | Value |
+| --- | --- |
+| `provider`, `model` | Provider ID `bfl` and the requested FLUX model. |
+| `requestId` | BFL task ID. |
+| `imageUrl` | Temporary delivery URL for the generated or edited image. |
+| `request` | The submission JSON, including any reference images and output format. |
+| `response` | The original JSON body of the final polling response. |
+| `costCredits` | Settled cost in BFL credits if reported, otherwise the price quoted at submission. Returns `null` if neither response includes a cost. |
+
+The application downloads the result from `imageUrl` if it needs the bytes.
+
 ## Errors and diagnostics
 
 | Symptom | Where to look |
@@ -201,6 +238,7 @@ test covers provider-managed MCP separately.
 | `MissingAiApiKeyException` | Inspect `provider` and its `apiKeySetting`. Supply the key through the application's configuration. |
 | `StructuredOutputException` | Inspect `violations` for schema validation details. Invalid JSON or an incorrect root type can produce an empty list. In an MCP request this can also refer to tool selection or arguments. |
 | `McpException` | Inspect the MCP operation and server error. Initialization must return a negotiated `protocolVersion`. A tool-level error also stops generation. |
+| `BflImageException` | Inspect `httpStatus` and `responseBody` for BFL submission or polling failures. |
 | Provider response exception | Inspect the HTTP status, request ID, and provider code when available. |
 | Flow fails before `Completed` | Handle the error in the collecting coroutine. The generation has no successful final result. |
 

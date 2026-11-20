@@ -3,8 +3,8 @@
 aiClient is a Kotlin Multiplatform library for text generation with OpenAI,
 DeepSeek, xAI, Z.ai, Kimi, and Perplexity. It supports request–response
 generation, streaming with Kotlin Flow, Structured Output validated against
-JSON Schema, image analysis with vision-capable models, and tool calls through
-Local MCP.
+JSON Schema, image analysis with vision-capable models, image generation
+with Black Forest Labs, and tool calls through Local MCP.
 
 Targets include JVM (server and Desktop), Android (API 24+), iOS arm64, and
 iOS Simulator arm64.
@@ -78,6 +78,7 @@ the provider default. Overloads that accept an `AiRequest` use `request.model`.
 | `ZAI` | `ZAI_API_KEY` | `glm-5.3` |
 | `KIMI` | `KIMI_API_KEY` | `kimi-k3.1-pro` |
 | `PERPLEXITY` | `PERPLEXITY_API_KEY` | `perplexity/sonar` |
+| `BFL` | `BFL_API_KEY` | `flux-3-image` (image generation) |
 
 The setting names appear in error messages and are used by live tests.
 Applications supply the values through `AiProviderConfig.apiKey`. Configure
@@ -96,7 +97,7 @@ val deepSeekModels = providerModelCatalog["deepseek"].orEmpty().map { it.id }
 ```
 
 Model availability depends on the provider API and your account. The catalog
-also includes BFL image-generation models. BFL has no text adapter.
+also includes BFL models for `generateImage()`.
 
 ## Four generation modes
 
@@ -262,6 +263,65 @@ four modes.
 ```sh
 ./gradlew :infrastructure:openAiVisionIntegrationTest
 ./gradlew :infrastructure:providerVisionIntegrationTest
+```
+
+## Image generation with Black Forest Labs
+
+Add `AiProviderId.BFL to AiProviderConfig(apiKey = bflKey)` to the provider map
+in `AiClientConfig`. Call `generateImage()` from a suspend context.
+
+```kotlin
+import `in`.hrup.aiclient.model.image.AiImageFormat
+
+val result = ai.generateImage(
+    prompt = "A small blue ceramic cup on a plain white background.",
+    model = "flux-3-image-klein",
+    outputFormat = AiImageFormat.PNG,
+)
+println(result.imageUrl)
+println(result.costCredits)
+```
+
+Use `AiImageFormat.PNG` or `AiImageFormat.JPEG` with FLUX 3 Image Klein
+and FLUX.2. FLUX 3 Image (`flux-3-image`) uses the provider's output format.
+Omit `outputFormat` when using that model.
+
+Pass `images` to edit or combine existing images. The list preserves input
+order and supports public HTTP(S) URLs and raw Base64.
+
+```kotlin
+import `in`.hrup.aiclient.model.conversation.AiImageSource
+
+val edited = ai.generateImage(
+    prompt = "Change the background to a warm studio setting.",
+    images = listOf(AiImageSource.Url("https://example.com/source.jpg")),
+    model = "flux-2-pro",
+    outputFormat = AiImageFormat.JPEG,
+)
+println(edited.imageUrl)
+```
+
+For local image bytes, use `AiImageSource.Base64(encodedImage, "image/jpeg")`.
+Pass the raw Base64 string. FLUX 3 supports up to ten references. FLUX.2
+supports up to eight references, or four for FLUX.2 Klein.
+
+aiClient submits the job, polls the URL returned by BFL, and returns an
+`AiImageResponse` when the job is ready. Use `imageUrl` to download the result,
+`request` and `response` to inspect the submitted JSON and final poll, and
+`costCredits` for the reported price in BFL credits. Delivery links expire
+after ten minutes. The default model comes from the BFL provider configuration
+or falls back to `flux-3-image`. See the [image API reference](docs/api-reference.md#image-generation)
+for response fields and polling behavior.
+
+For a custom BFL endpoint, set `AiProviderConfig.endpoint` to the API base
+URL, such as `https://api.eu.bfl.ai/v1`. The library appends the model ID.
+
+Set `BFL_API_KEY` in the environment or local `.env` to run the opt-in test.
+
+```sh
+./gradlew :infrastructure:bflIntegrationTest
+# Image editing only
+./gradlew :infrastructure:bflIntegrationTest --tests '*editsImageFrom*'
 ```
 
 ## Final results and provider logging
@@ -514,6 +574,7 @@ You can also run individual integration tasks.
 | Provider or scenario | Gradle task |
 | --- | --- |
 | OpenAI | `:infrastructure:openAiIntegrationTest` |
+| BFL image generation | `:infrastructure:bflIntegrationTest` |
 | OpenAI image analysis | `:infrastructure:openAiVisionIntegrationTest` |
 | Other providers' image analysis | `:infrastructure:providerVisionIntegrationTest` |
 | DeepSeek | `:infrastructure:deepSeekIntegrationTest` |

@@ -7,6 +7,7 @@ enum class AiProviderId(internal val defaultModelId: String, val apiKeySetting: 
     ZAI("glm-5.3", "ZAI_API_KEY"),
     KIMI("kimi-k3.1-pro", "KIMI_API_KEY"),
     PERPLEXITY("perplexity/sonar", "PERPLEXITY_API_KEY"),
+    BFL("flux-3-image", "BFL_API_KEY"),
 }
 
 class AiProviderConfig(

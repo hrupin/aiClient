@@ -12,7 +12,10 @@ import `in`.hrup.aiclient.model.value.AiValue
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
+import io.ktor.http.HttpHeaders
+import io.ktor.http.headersOf
 import io.ktor.http.content.OutgoingContent
+import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonPrimitive
@@ -90,6 +93,28 @@ class StructuredOutputTest {
             assertFailsWith<StructuredOutputException> { provider.generate(request) }
         }
         Unit
+    }
+
+    @Test
+    fun streamingRejectsInvalidFinalJson() = runBlocking {
+        HttpClient(MockEngine { request ->
+            val payload = Json.decodeFromString<ResponsesRequest>(
+                assertIs<OutgoingContent.ByteArrayContent>(request.body).bytes().decodeToString(),
+            )
+            assertEquals(true, payload.stream)
+            val format = requireNotNull(payload.text).format
+            assertTrue(format.strict)
+            assertEquals(Json.parseToJsonElement(schema), format.schema)
+            val invalid = completed("""{"operations":[{"amount":"12.5"}],"warnings":[]}""")
+            respond(
+                """data: {"type":"response.completed","response":$invalid}""" + "\n\n",
+                headers = headersOf(HttpHeaders.ContentType, "text/event-stream"),
+            )
+        }).use { client ->
+            val provider = OpenAiResponsesProvider(HttpTransport(client), "test-key")
+            val error = assertFailsWith<StructuredOutputException> { provider.stream(request).toList() }
+            assertTrue(error.violations.isNotEmpty())
+        }
     }
 
     private fun completed(text: String) =

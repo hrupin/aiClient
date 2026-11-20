@@ -1,6 +1,9 @@
 package `in`.hrup.aiclient.infrastructure.providers.text
 
 import `in`.hrup.aiclient.infrastructure.http.HttpTransport
+import `in`.hrup.aiclient.infrastructure.http.sse.SseEvent
+import `in`.hrup.aiclient.infrastructure.http.sse.SseResponseException
+import `in`.hrup.aiclient.infrastructure.http.sse.sse
 import `in`.hrup.aiclient.infrastructure.structured.JsonStructuredOutput
 import `in`.hrup.aiclient.model.conversation.AiContentPart
 import `in`.hrup.aiclient.model.conversation.AiMessage
@@ -11,11 +14,14 @@ import `in`.hrup.aiclient.model.generation.AiUsage
 import `in`.hrup.aiclient.model.generation.StructuredOutputException
 import io.ktor.client.request.accept
 import io.ktor.client.request.bearerAuth
+import io.ktor.client.request.HttpRequestBuilder
 import io.ktor.client.request.setBody
 import io.ktor.http.ContentType
 import io.ktor.http.HttpMethod
 import io.ktor.http.contentType
 import kotlinx.serialization.SerialName
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.catch
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
@@ -47,11 +53,8 @@ internal class TextProviderHttp(
 
     suspend fun post(payload: String): TextHttpResponse {
         val response = transport.execute(endpoint) {
-            method = HttpMethod.Post
+            configurePost(payload)
             accept(ContentType.Application.Json)
-            contentType(ContentType.Application.Json)
-            apiKey?.let { bearerAuth(it) }
-            setBody(payload)
         }
         val result = TextHttpResponse(
             provider,
@@ -68,6 +71,27 @@ internal class TextProviderHttp(
             result.failFrom(error, "$provider returned HTTP ${result.status}")
         }
         return result
+    }
+
+    fun stream(payload: String): Flow<SseEvent> =
+        transport.sse(endpoint) { configurePost(payload) }.catch { cause ->
+            if (cause !is SseResponseException) throw cause
+            TextHttpResponse(
+                provider,
+                cause.head.status.value,
+                cause.head.headers["x-request-id"] ?: cause.head.headers["request-id"]
+                    ?: cause.head.headers["x-ds-request-id"],
+                "",
+            ).fail(cause.message ?: "Invalid $provider SSE response", cause = cause)
+        }
+
+    fun streamResponse(body: String = "") = TextHttpResponse(provider, 200, null, body)
+
+    private fun HttpRequestBuilder.configurePost(payload: String) {
+        method = HttpMethod.Post
+        contentType(ContentType.Application.Json)
+        apiKey?.let { bearerAuth(it) }
+        setBody(payload)
     }
 }
 

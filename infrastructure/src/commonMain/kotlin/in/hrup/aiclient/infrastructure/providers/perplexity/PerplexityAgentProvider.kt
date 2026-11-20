@@ -4,11 +4,16 @@ import `in`.hrup.aiclient.infrastructure.http.HttpTransport
 import `in`.hrup.aiclient.infrastructure.providers.text.TextMessage
 import `in`.hrup.aiclient.infrastructure.providers.text.TextProviderHttp
 import `in`.hrup.aiclient.infrastructure.providers.text.generateResponses
+import `in`.hrup.aiclient.infrastructure.providers.text.streamResponses
 import `in`.hrup.aiclient.infrastructure.providers.text.textMessages
 import `in`.hrup.aiclient.infrastructure.structured.JsonStructuredOutput
 import `in`.hrup.aiclient.model.generation.AiRequest
 import `in`.hrup.aiclient.model.generation.AiResponse
-import `in`.hrup.aiclient.provider.AiProvider
+import `in`.hrup.aiclient.model.generation.AiStreamEvent
+import `in`.hrup.aiclient.provider.StreamingAiProvider
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.flow
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
@@ -17,22 +22,30 @@ class PerplexityAgentProvider(
     transport: HttpTransport,
     apiKey: String,
     endpoint: String = "https://api.perplexity.ai/v1/agent",
-) : AiProvider {
+) : StreamingAiProvider {
     private val http = TextProviderHttp("Perplexity", transport, endpoint, apiKey)
     private val metadataTypes = setOf("reasoning", "search_results")
 
     override suspend fun generate(request: AiRequest): AiResponse {
-        val input = request.textMessages(http.provider)
-        val format = request.responseFormat
-        val structured = format?.let(::JsonStructuredOutput)
-        val payload = PerplexityRequest(
-            model = request.model.id,
+        val structured = request.responseFormat?.let(::JsonStructuredOutput)
+        val payload = request.toPayload(structured)
+        return http.generateResponses(http.json.encodeToString(payload), structured, metadataTypes)
+    }
+    override fun stream(request: AiRequest): Flow<AiStreamEvent> = flow {
+        val structured = request.responseFormat?.let(::JsonStructuredOutput)
+        val payload = request.toPayload(structured).copy(stream = true)
+        emitAll(http.streamResponses(http.json.encodeToString(payload), structured, metadataTypes))
+    }
+
+    private fun AiRequest.toPayload(structured: JsonStructuredOutput?): PerplexityRequest {
+        val input = textMessages(http.provider)
+        return PerplexityRequest(
+            model = model.id,
             input = input,
             responseFormat = structured?.let {
-                PerplexityFormat("json_schema", PerplexitySchema(format.name, it.definition))
+                PerplexityFormat("json_schema", PerplexitySchema(requireNotNull(responseFormat).name, it.definition))
             },
         )
-        return http.generateResponses(http.json.encodeToString(payload), structured, metadataTypes)
     }
 }
 
@@ -41,6 +54,7 @@ private data class PerplexityRequest(
     val model: String,
     val input: List<TextMessage>,
     @SerialName("response_format") val responseFormat: PerplexityFormat? = null,
+    val stream: Boolean = false,
 )
 
 @Serializable

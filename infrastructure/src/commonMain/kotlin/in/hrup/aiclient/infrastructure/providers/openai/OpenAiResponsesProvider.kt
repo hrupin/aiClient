@@ -46,12 +46,8 @@ class OpenAiResponsesProvider(
     }
 
     override suspend fun generate(request: AiRequest): AiResponse {
-        val format = request.responseFormat
-        val structured = format?.let(::JsonStructuredOutput)
-        val payload = request.toResponsesRequest().let {
-            if (structured == null) it
-            else it.copy(text = ResponsesText(ResponsesJsonFormat("json_schema", format.name, true, structured.definition)))
-        }
+        val structured = request.responseFormat?.let(::JsonStructuredOutput)
+        val payload = request.toResponsesRequest(structured)
         val response = transport.execute(endpoint) {
             configureRequest(payload)
             accept(ContentType.Application.Json)
@@ -73,17 +69,12 @@ class OpenAiResponsesProvider(
         } catch (cause: SerializationException) {
             throw OpenAiResponsesException("Invalid OpenAI Responses payload", status, requestId, cause = cause)
         }
-        val result = decoded.toAiResponse(status, requestId)
-        if (structured == null) return result
-        val message = result.output.singleOrNull() as? AiMessage
-            ?: throw StructuredOutputException("Expected one structured output message")
-        val text = message.content.joinToString("") { (it as AiContentPart.Text).text }
-        return result.copy(structuredOutput = structured.validate(text))
+        return decoded.toAiResponse(status, requestId).withStructuredOutput(structured)
     }
 
     override fun stream(request: AiRequest): Flow<AiStreamEvent> = flow {
-        require(request.responseFormat == null) { "Structured output is supported by generate()" }
-        val payload = request.toResponsesRequest().copy(stream = true)
+        val structured = request.responseFormat?.let(::JsonStructuredOutput)
+        val payload = request.toResponsesRequest(structured).copy(stream = true)
         val indices = mutableMapOf<Int, Int>()
         var completed = false
         try {
@@ -115,6 +106,7 @@ class OpenAiResponsesProvider(
                         }
                         "response.completed" -> {
                             val response = (event.response ?: missing("response")).toAiResponse(200, null)
+                                .withStructuredOutput(structured)
                             completed = true
                             emit(AiStreamEvent.Completed(response))
                         }
@@ -183,7 +175,15 @@ class OpenAiResponsesProvider(
         }
     }
 
-    private fun AiRequest.toResponsesRequest(): ResponsesRequest {
+    private fun AiResponse.withStructuredOutput(structured: JsonStructuredOutput?): AiResponse {
+        if (structured == null) return this
+        val message = output.singleOrNull() as? AiMessage
+            ?: throw StructuredOutputException("Expected one structured output message")
+        val text = message.content.joinToString("") { (it as AiContentPart.Text).text }
+        return copy(structuredOutput = structured.validate(text))
+    }
+
+    private fun AiRequest.toResponsesRequest(structured: JsonStructuredOutput?): ResponsesRequest {
         require(tools.isEmpty()) { "This OpenAI Responses adapter supports text requests only" }
         require(input.isNotEmpty()) { "OpenAI Responses input must contain a message" }
         return ResponsesRequest(model.id, input.map { item ->
@@ -194,6 +194,8 @@ class OpenAiResponsesProvider(
                 part.text
             }
             ResponsesInputMessage(item.role.name.lowercase(), text)
+        }, text = structured?.let {
+            ResponsesText(ResponsesJsonFormat("json_schema", requireNotNull(responseFormat).name, true, it.definition))
         })
     }
 }

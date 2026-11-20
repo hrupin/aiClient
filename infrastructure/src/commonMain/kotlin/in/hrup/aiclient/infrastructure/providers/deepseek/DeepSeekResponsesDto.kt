@@ -9,6 +9,7 @@ internal data class DeepSeekRequest(
     val model: String,
     val input: List<DeepSeekMessage>,
     val text: DeepSeekText? = null,
+    val stream: Boolean = false,
 )
 
 @Serializable

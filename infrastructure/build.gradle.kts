@@ -29,6 +29,7 @@ kotlin {
             "zaiIntegrationTest" to "$liveTextTestPackage.ZaiLiveIntegrationTest",
             "kimiIntegrationTest" to "$liveTextTestPackage.KimiLiveIntegrationTest",
             "perplexityIntegrationTest" to "$liveTextTestPackage.PerplexityLiveIntegrationTest",
+            "providerMatrixIntegrationTest" to "$liveTextTestPackage.ProviderMatrixIntegrationTest",
         )
 
         testRuns.named("test") {
@@ -46,6 +47,12 @@ kotlin {
                 classpath = compilation.output.allOutputs + compilation.runtimeDependencyFiles
                 filter.includeTestsMatching(testClass)
                 testLogging.showStandardStreams = true
+                if (taskName == "providerMatrixIntegrationTest") {
+                    reports.junitXml.isOutputPerTestCase = true
+                    providers.gradleProperty("aiClientMatrixResults").orNull?.let {
+                        reports.junitXml.outputLocation.set(file(it))
+                    }
+                }
                 workingDir(rootProject.layout.projectDirectory.asFile)
                 providers.gradleProperty("aiProvider").orNull?.let { systemProperty("aiProvider", it) }
                 providers.gradleProperty("aiModel").orNull?.let { systemProperty("aiModel", it) }

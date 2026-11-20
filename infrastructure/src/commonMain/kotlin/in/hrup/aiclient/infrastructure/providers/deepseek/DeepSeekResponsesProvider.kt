@@ -1,15 +1,23 @@
 package `in`.hrup.aiclient.infrastructure.providers.deepseek
 
 import `in`.hrup.aiclient.infrastructure.http.HttpTransport
+import `in`.hrup.aiclient.infrastructure.providers.text.ProviderResponseException
+import `in`.hrup.aiclient.infrastructure.providers.text.TextProviderHttp
+import `in`.hrup.aiclient.infrastructure.providers.text.streamResponses
 import `in`.hrup.aiclient.infrastructure.structured.JsonStructuredOutput
 import `in`.hrup.aiclient.model.conversation.AiContentPart
 import `in`.hrup.aiclient.model.conversation.AiMessage
 import `in`.hrup.aiclient.model.conversation.AiRole
 import `in`.hrup.aiclient.model.generation.AiRequest
 import `in`.hrup.aiclient.model.generation.AiResponse
+import `in`.hrup.aiclient.model.generation.AiStreamEvent
 import `in`.hrup.aiclient.model.generation.AiUsage
 import `in`.hrup.aiclient.model.generation.StructuredOutputException
-import `in`.hrup.aiclient.provider.AiProvider
+import `in`.hrup.aiclient.provider.StreamingAiProvider
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.flow
 import io.ktor.client.request.accept
 import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.setBody
@@ -17,7 +25,6 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpMethod
 import io.ktor.http.contentType
 import kotlinx.serialization.SerializationException
-import kotlinx.serialization.json.Json
 
 class DeepSeekResponsesException(
     message: String,
@@ -31,37 +38,14 @@ class DeepSeekResponsesProvider(
     private val transport: HttpTransport,
     private val apiKey: String,
     private val endpoint: String = "https://api.deepseek.com/responses",
-) : AiProvider {
-    private val json = Json { ignoreUnknownKeys = true }
-
-    init {
-        require(apiKey.isNotBlank()) { "DeepSeek API key must not be blank" }
-    }
+) : StreamingAiProvider {
+    private val streamingHttp = TextProviderHttp("DeepSeek", transport, endpoint, apiKey)
+    private val json get() = streamingHttp.json
+    private val metadataTypes = setOf("reasoning")
 
     override suspend fun generate(request: AiRequest): AiResponse {
-        val model = request.model.id
-        require(model == "deepseek-flash" || model == "deepseek-v4-pro") { "Unsupported DeepSeek model: $model" }
-        require(request.tools.isEmpty()) { "DeepSeek tool calling is unavailable in this adapter" }
-        require(request.input.isNotEmpty()) { "DeepSeek input must contain a message" }
-
-        val format = request.responseFormat
-        val structured = format?.let(::JsonStructuredOutput)
-        val payload = DeepSeekRequest(
-            model = model,
-            input = request.input.map { item ->
-                require(item is AiMessage) { "DeepSeek input must contain only messages" }
-                require(item.role != AiRole.DEVELOPER || model == "deepseek-flash") {
-                    "DeepSeek V4 Pro treats developer messages as user messages. Use an explicit system message."
-                }
-                require(item.content.isNotEmpty()) { "DeepSeek messages must contain text" }
-                val content = item.content.joinToString("") { part ->
-                    require(part is AiContentPart.Text) { "This DeepSeek adapter accepts text content only" }
-                    part.text
-                }
-                DeepSeekMessage(item.role.name.lowercase(), content)
-            },
-            text = structured?.let { DeepSeekText(DeepSeekFormat("json_schema", format.name, it.definition)) },
-        )
+        val structured = request.responseFormat?.let(::JsonStructuredOutput)
+        val payload = request.toPayload(structured)
         val response = transport.execute(endpoint) {
             method = HttpMethod.Post
             bearerAuth(apiKey)
@@ -123,6 +107,47 @@ class DeepSeekResponsesProvider(
             output = messages,
             usage = decoded.usage?.let { AiUsage(it.inputTokens, it.outputTokens, it.totalTokens) },
             structuredOutput = output,
+        )
+    }
+
+    override fun stream(request: AiRequest): Flow<AiStreamEvent> = flow {
+        val structured = request.responseFormat?.let(::JsonStructuredOutput)
+        val payload = request.toPayload(structured).copy(stream = true)
+        emitAll(streamingHttp.streamResponses(json.encodeToString(payload), structured, metadataTypes).catch { cause ->
+            if (cause !is ProviderResponseException) throw cause
+            throw DeepSeekResponsesException(
+                cause.message ?: "DeepSeek streaming request failed",
+                cause.httpStatus,
+                cause.requestId,
+                cause.code,
+                cause,
+            )
+        })
+    }
+
+    private fun AiRequest.toPayload(structured: JsonStructuredOutput?): DeepSeekRequest {
+        val model = model.id
+        require(model == "deepseek-flash" || model == "deepseek-v4-pro") { "Unsupported DeepSeek model: $model" }
+        require(tools.isEmpty()) { "DeepSeek tool calling is unavailable in this adapter" }
+        require(input.isNotEmpty()) { "DeepSeek input must contain a message" }
+
+        return DeepSeekRequest(
+            model = model,
+            input = input.map { item ->
+                require(item is AiMessage) { "DeepSeek input must contain only messages" }
+                require(item.role != AiRole.DEVELOPER || model == "deepseek-flash") {
+                    "DeepSeek V4 Pro treats developer messages as user messages. Use an explicit system message."
+                }
+                require(item.content.isNotEmpty()) { "DeepSeek messages must contain text" }
+                val content = item.content.joinToString("") { part ->
+                    require(part is AiContentPart.Text) { "This DeepSeek adapter accepts text content only" }
+                    part.text
+                }
+                DeepSeekMessage(item.role.name.lowercase(), content)
+            },
+            text = structured?.let {
+                DeepSeekText(DeepSeekFormat("json_schema", requireNotNull(responseFormat).name, it.definition))
+            },
         )
     }
 }

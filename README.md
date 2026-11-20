@@ -123,3 +123,27 @@ Override the model with `-PaiModel=...` or the provider-specific setting
 `DEEPSEEK_MODEL`, `XAI_MODEL`, `ZAI_MODEL`, `KIMI_MODEL`, or `PERPLEXITY_MODEL`.
 For Z.ai and Kimi, the adapter includes the schema in its generation instructions
 and validates the completed JSON locally before returning it.
+
+All six text adapters implement `StreamingAiProvider`. Use `stream()` for
+text deltas and a final `Completed` event. Use `generate()` for Structured Output.
+To run only the streaming check for a provider, filter its integration task:
+
+```sh
+./gradlew :infrastructure:xaiIntegrationTest --tests '*streamsText'
+```
+
+### Run the provider test matrix
+
+```sh
+./scripts/test-provider-matrix.sh
+```
+
+The script requires Python 3 and runs four live cases per provider: buffered text,
+buffered JSON Schema output, streamed text, and streamed JSON Schema output.
+Structured results are validated locally before the final response is returned.
+The final table shows the result or error for each case. A failed check makes
+the script exit nonzero. To run just the streamed JSON Schema cases:
+
+```sh
+./scripts/test-provider-matrix.sh --tests '*streamingWithSchema*'
+```

@@ -25,6 +25,7 @@ import io.ktor.http.HttpMethod
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.content.OutgoingContent
 import io.ktor.http.headersOf
+import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonPrimitive
@@ -133,6 +134,38 @@ class TextProviderAdaptersTest {
             }
         }
         Unit
+    }
+
+    @Test
+    fun streamingRejectsFinalJsonWithWrongFieldType() = runBlocking {
+        val invalid = """{"value":"42"}"""
+        val responsesStream = listOf(
+            """{"type":"response.completed","response":${responsesOutput(invalid, "reasoning")}}""",
+        )
+        val chatStream = listOf(
+            """{"choices":[{"index":0,"delta":{"content":${JsonPrimitive(invalid)}}}]}""",
+            """{"choices":[{"index":0,"finish_reason":"stop"}]}""",
+            "[DONE]",
+        )
+        for ((frames, providerFactory) in listOf(
+            responsesStream to { transport: HttpTransport -> XaiResponsesProvider(transport, "test-key") },
+            chatStream to { transport: HttpTransport -> KimiChatProvider(transport, "test-key") },
+        )) {
+            HttpClient(MockEngine {
+                respond(
+                    frames.joinToString("") { frame ->
+                        frame.lineSequence().joinToString("\n") { "data: $it" } + "\n\n"
+                    },
+                    headers = headersOf(HttpHeaders.ContentType, "text/event-stream"),
+                )
+            }).use { client ->
+                val provider = providerFactory(HttpTransport(client))
+                val error = assertFailsWith<StructuredOutputException> {
+                    provider.stream(request("test-model").copy(responseFormat = format)).toList()
+                }
+                assertTrue(error.violations.isNotEmpty())
+            }
+        }
     }
 
     @Test

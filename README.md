@@ -105,3 +105,21 @@ and prints each tool's metadata and input schema. It runs only when requested.
 This test uses the same OpenAI settings as `openAiIntegrationTest`. It allows
 only `get_available_models` on the MCP server, checks the tool call in the
 Responses output, and validates and prints the generated model list.
+
+### Live DeepSeek, xAI, Z.ai, Kimi and Perplexity tests
+
+Set the key in the root `.env` file or in the environment, then run the
+corresponding task. Each task prints the provider's response to the console.
+
+| Gradle task | Environment key | Default model | Output |
+| --- | --- | --- | --- |
+| `:infrastructure:deepSeekIntegrationTest` | `DEEPSEEK_API_KEY` | `deepseek-flash` | Validated JSON |
+| `:infrastructure:xaiIntegrationTest` | `XAI_API_KEY` | `grok-4.7` | Validated JSON |
+| `:infrastructure:zaiIntegrationTest` | `ZAI_API_KEY` | `glm-5.3` | Validated JSON |
+| `:infrastructure:kimiIntegrationTest` | `KIMI_API_KEY` | `kimi-k3.1-pro` | Validated JSON |
+| `:infrastructure:perplexityIntegrationTest` | `PERPLEXITY_API_KEY` | `perplexity/sonar` | Validated JSON |
+
+Override the model with `-PaiModel=...` or the provider-specific setting
+`DEEPSEEK_MODEL`, `XAI_MODEL`, `ZAI_MODEL`, `KIMI_MODEL`, or `PERPLEXITY_MODEL`.
+For Z.ai and Kimi, the adapter includes the schema in its generation instructions
+and validates the completed JSON locally before returning it.

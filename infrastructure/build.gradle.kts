@@ -19,10 +19,16 @@ kotlin {
     jvm {
         val testCompilation = compilations.named("test")
         val openAiTestPackage = "in.hrup.aiclient.infrastructure.providers.openai"
+        val liveTextTestPackage = "in.hrup.aiclient.infrastructure.providers"
         val integrationTests = mapOf(
             "openAiIntegrationTest" to "$openAiTestPackage.OpenAiLiveIntegrationTest",
             "mcpToolsIntegrationTest" to "in.hrup.aiclient.infrastructure.mcp.McpToolsIntegrationTest",
             "openAiRemoteMcpIntegrationTest" to "$openAiTestPackage.OpenAiRemoteMcpIntegrationTest",
+            "deepSeekIntegrationTest" to "$liveTextTestPackage.DeepSeekLiveIntegrationTest",
+            "xaiIntegrationTest" to "$liveTextTestPackage.XaiLiveIntegrationTest",
+            "zaiIntegrationTest" to "$liveTextTestPackage.ZaiLiveIntegrationTest",
+            "kimiIntegrationTest" to "$liveTextTestPackage.KimiLiveIntegrationTest",
+            "perplexityIntegrationTest" to "$liveTextTestPackage.PerplexityLiveIntegrationTest",
         )
 
         testRuns.named("test") {

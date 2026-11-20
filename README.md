@@ -147,3 +147,7 @@ the script exit nonzero. To run just the streamed JSON Schema cases:
 ```sh
 ./scripts/test-provider-matrix.sh --tests '*streamingWithSchema*'
 ```
+
+## License
+
+aiClient is licensed under the [Apache License, Version 2.0](LICENSE).

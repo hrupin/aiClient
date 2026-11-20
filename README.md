@@ -18,12 +18,12 @@ Use `commonMain.dependencies` in a KMP module or the module's
 `dependencies` block in a JVM or Android application.
 
 ```kotlin
-implementation("in.hrup.aiclient:kmp:0.1.0")
+implementation("in.hrup.aiclient:kmp:0.1.1")
 ```
 
 Use a version available in Maven Central. The `kmp` artifact includes
 `core` as a transitive dependency. For domain models and contracts alone,
-use `implementation("in.hrup.aiclient:core:0.1.0")`.
+use `implementation("in.hrup.aiclient:core:0.1.1")`.
 
 ## Dependency injection
 

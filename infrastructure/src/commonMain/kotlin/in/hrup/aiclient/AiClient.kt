@@ -1,5 +1,6 @@
 package `in`.hrup.aiclient
 
+import `in`.hrup.aiclient.infrastructure.http.HttpExchangeCapture
 import `in`.hrup.aiclient.infrastructure.http.HttpTransport
 import `in`.hrup.aiclient.infrastructure.mcp.McpAvailableTool
 import `in`.hrup.aiclient.infrastructure.mcp.StreamableHttpMcpClient
@@ -22,7 +23,6 @@ import `in`.hrup.aiclient.model.generation.JsonResponseFormat
 import `in`.hrup.aiclient.provider.StreamingAiProvider
 import io.ktor.client.HttpClient
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
 
 /**
@@ -31,8 +31,8 @@ import kotlinx.coroutines.flow.flow
  * Each request's `mcpTools` maps configured server IDs to the tool names available
  * to that request. An empty selection makes no MCP requests.
  */
-class AiClient(httpClient: HttpClient, private val config: AiClientConfig) {
-    private val transport = HttpTransport(httpClient)
+class AiClient(private val httpClient: HttpClient, private val config: AiClientConfig) {
+    private val mcpTransport = HttpTransport(httpClient)
 
     suspend fun generate(
         prompt: String,
@@ -47,8 +47,10 @@ class AiClient(httpClient: HttpClient, private val config: AiClientConfig) {
         provider: AiProviderId = config.defaultProvider,
         mcpTools: Map<String, Set<String>> = emptyMap(),
     ): AiResponse {
-        val adapter = adapter(provider)
+        val capture = HttpExchangeCapture()
+        val adapter = adapter(provider, HttpTransport(httpClient, capture))
         return adapter.generateWithMcpTools(request, availableTools(mcpTools))
+            .withRequestDetails(provider, request, capture)
     }
 
     fun stream(
@@ -67,10 +69,27 @@ class AiClient(httpClient: HttpClient, private val config: AiClientConfig) {
     ): Flow<AiStreamEvent> {
         val selection = mcpTools.mapValues { (_, names) -> names.toSet() }
         return flow {
-            val adapter = adapter(provider)
-            emitAll(adapter.streamWithMcpTools(request, availableTools(selection)))
+            val capture = HttpExchangeCapture()
+            val adapter = adapter(provider, HttpTransport(httpClient, capture))
+            adapter.streamWithMcpTools(request, availableTools(selection)).collect { event ->
+                emit(when (event) {
+                    is AiStreamEvent.Completed -> event.copy(response = event.response.withRequestDetails(provider, request, capture))
+                    else -> event
+                })
+            }
         }
     }
+
+    private fun AiResponse.withRequestDetails(
+        provider: AiProviderId,
+        request: AiRequest,
+        capture: HttpExchangeCapture,
+    ): AiResponse = copy(
+        provider = provider.name.lowercase(),
+        model = request.model.id,
+        request = capture.requestBody,
+        response = capture.responseBody(),
+    )
 
     private fun textRequest(prompt: String, provider: AiProviderId, model: String?, format: JsonResponseFormat?) =
         AiRequest(
@@ -82,14 +101,14 @@ class AiClient(httpClient: HttpClient, private val config: AiClientConfig) {
     private suspend fun availableTools(selection: Map<String, Set<String>>): List<McpAvailableTool> {
         val clients = selection.filterValues { it.isNotEmpty() }.map { (id, names) ->
             val server = requireNotNull(config.mcpServers[id]) { "Unknown MCP server: $id" }
-            StreamableHttpMcpClient(transport, server.endpoint, names, server.headers)
+            StreamableHttpMcpClient(mcpTransport, server.endpoint, names, server.headers)
         }
         return clients.flatMap { client ->
             client.listTools().map { McpAvailableTool(client, it) }
         }
     }
 
-    private fun adapter(provider: AiProviderId): StreamingAiProvider {
+    private fun adapter(provider: AiProviderId, transport: HttpTransport): StreamingAiProvider {
         val settings = config.providers[provider]
         val key = settings?.apiKey?.takeIf(String::isNotBlank) ?: throw MissingAiApiKeyException(provider)
         val endpoint = settings.endpoint

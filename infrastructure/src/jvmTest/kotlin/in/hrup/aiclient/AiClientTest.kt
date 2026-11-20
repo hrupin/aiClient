@@ -1,7 +1,9 @@
 package `in`.hrup.aiclient
 
+import `in`.hrup.aiclient.infrastructure.structured.parseJsonResponseFormat
 import `in`.hrup.aiclient.model.conversation.AiContentPart
 import `in`.hrup.aiclient.model.conversation.AiMessage
+import `in`.hrup.aiclient.model.generation.AiStreamEvent
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
@@ -43,6 +45,8 @@ class AiClientTest {
     @Test
     fun routesThroughConfiguredProviderModelAndMcpServer() = runBlocking {
         var providerCalls = 0
+        var finalRequest = ""
+        val finalResponse = """{"id":"provider-response","choices":[{"finish_reason":"stop","message":{"content":"Done"}}],"usage":{"prompt_tokens":10,"completion_tokens":2}}"""
         val methods = mutableListOf<String>()
         HttpClient(MockEngine { request ->
             val bytes = assertIs<OutgoingContent.ByteArrayContent>(request.body).bytes()
@@ -76,7 +80,8 @@ class AiClientTest {
                     respond("""{"choices":[{"finish_reason":"stop","message":{"content":$plan}}]}""")
                 } else {
                     assertTrue("from-mcp" in payload.toString())
-                    respond("""{"choices":[{"finish_reason":"stop","message":{"content":"Done"}}]}""")
+                    finalRequest = bytes.decodeToString()
+                    respond(finalResponse)
                 }
             }
         }).use { http ->
@@ -89,6 +94,14 @@ class AiClientTest {
             ))
             val result = client.generate("Look up the result", model = "override-model", mcpTools = mapOf("lookup-server" to setOf("lookup")))
             assertEquals(listOf(AiContentPart.Text("Done")), assertIs<AiMessage>(result.output.single()).content)
+            assertEquals("Done", result.content)
+            assertEquals(finalResponse, result.response)
+            assertEquals(finalRequest, result.request)
+            assertTrue("from-mcp" in result.request)
+            assertEquals("kimi", result.provider)
+            assertEquals("override-model", result.model)
+            assertEquals(10L, result.tokensSent)
+            assertEquals(2L, result.tokensReceived)
             assertEquals(2, providerCalls)
             assertEquals(
                 listOf("initialize", "notifications/initialized", "tools/list", "initialize", "notifications/initialized", "tools/call"),
@@ -96,4 +109,39 @@ class AiClientTest {
             )
         }
     }
+
+    @Test
+    fun streamCompletionExposesTheSameResponseFields() = runBlocking {
+        val jsonResult = """{"value":"готово"}"""
+        val responseBody = """data: {"choices":[{"index":0,"delta":{"content":${JsonPrimitive(jsonResult)}}}]}
+
+data: {"id":"provider-response","choices":[{"index":0,"finish_reason":"stop"}],"usage":{"prompt_tokens":8,"completion_tokens":1}}
+
+data: [DONE]
+
+"""
+        var requestBody = ""
+        HttpClient(MockEngine { request ->
+            requestBody = assertIs<OutgoingContent.ByteArrayContent>(request.body).bytes().decodeToString()
+            respond(responseBody, headers = headersOf(HttpHeaders.ContentType, "text/event-stream"))
+        }).use { http ->
+            val client = AiClient(http, AiClientConfig(
+                providers = mapOf(AiProviderId.KIMI to AiProviderConfig("provider-key", "default-model")),
+            ))
+            val format = parseJsonResponseFormat(
+                "result", """{"type":"object","properties":{"value":{"type":"string"}},"required":["value"]}""",
+            )
+            val events = client.stream("Finish", provider = AiProviderId.KIMI, responseFormat = format).toList()
+            val result = assertIs<AiStreamEvent.Completed>(events.last()).response
+            assertEquals(jsonResult, result.content)
+            assertEquals(responseBody, result.response)
+            assertEquals(requestBody, result.request)
+            assertTrue(Json.parseToJsonElement(result.request).jsonObject.getValue("stream").jsonPrimitive.content == "true")
+            assertEquals("kimi", result.provider)
+            assertEquals("default-model", result.model)
+            assertEquals(8L, result.tokensSent)
+            assertEquals(1L, result.tokensReceived)
+        }
+    }
+
 }

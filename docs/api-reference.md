@@ -66,6 +66,11 @@ an empty `AiRequest.tools` list. Use the `mcpTools` argument for Local MCP.
 
 | Value | Meaning |
 | --- | --- |
+| `AiResponse.content` | Final assistant text, including the validated JSON text in Structured Output mode. |
+| `AiResponse.request` | The JSON body sent to the provider for the final generation through `AiClient`. |
+| `AiResponse.response` | The provider's response body. Streamed responses retain the SSE body received through completion. |
+| `AiResponse.provider`, `AiResponse.model` | Provider ID and requested model ID for calls through `AiClient`. |
+| `AiResponse.tokensSent`, `AiResponse.tokensReceived` | Reported input and output token counts for final generation. Missing counts default to zero here and remain null in `usage`. |
 | `AiResponse.output` | Provider output mapped to conversation items. Text is in the `AiContentPart.Text` parts of assistant messages. |
 | `AiResponse.usage` | Provider-reported counts when available. The usage object and its individual counters may be null. |
 | `AiResponse.structuredOutput` | The validated JSON object as an `AiValue.Object` when a response format was requested. |
@@ -75,6 +80,12 @@ an empty `AiRequest.tools` list. Use the `mcpTools` argument for Local MCP.
 
 A collection can emit text before a subsequent error. Wait for `Completed`
 before treating a streamed structured result as valid.
+
+The captured exchange includes the final generation request and response.
+For Local MCP, the final request includes the tool result when a tool ran.
+Heads, authentication headers, and separate tool-selection or MCP exchanges
+are outside these body fields. The fields can contain prompts, completions,
+and tool data. Apply your application's logging policy before persisting them.
 
 ## Structured Output
 

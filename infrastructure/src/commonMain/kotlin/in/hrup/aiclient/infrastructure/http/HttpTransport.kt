@@ -8,10 +8,12 @@ import io.ktor.client.statement.bodyAsBytes
 import io.ktor.client.statement.bodyAsChannel
 import io.ktor.http.Headers
 import io.ktor.http.HttpStatusCode
+import io.ktor.http.content.OutgoingContent
 import io.ktor.utils.io.readAvailable
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.flow.channelFlow
+import kotlinx.coroutines.flow.onEach
 
 data class HttpResponseHead(val status: HttpStatusCode, val headers: Headers)
 
@@ -23,16 +25,21 @@ sealed interface HttpStreamPart {
 }
 
 /** Borrows [client]. Its owner is responsible for closing it. */
-class HttpTransport(private val client: HttpClient) {
+class HttpTransport internal constructor(
+    private val client: HttpClient,
+    private val capture: HttpExchangeCapture?,
+) {
+    constructor(client: HttpClient) : this(client, null)
+
     /** Returns the response for any HTTP status, including error statuses. */
     suspend fun execute(
         url: String,
         configure: HttpRequestBuilder.() -> Unit = {},
     ): BufferedHttpResponse = prepare(url, configure).execute { response ->
-        BufferedHttpResponse(
-            head = HttpResponseHead(response.status, response.headers),
-            body = response.bodyAsBytes(),
-        )
+        capture?.begin(response.call.request.content)
+        val body = response.bodyAsBytes()
+        capture?.append(body)
+        BufferedHttpResponse(HttpResponseHead(response.status, response.headers), body)
     }
 
     /** Each collection opens a request and emits its headers before any body bytes. */
@@ -41,6 +48,7 @@ class HttpTransport(private val client: HttpClient) {
         configure: HttpRequestBuilder.() -> Unit = {},
     ): Flow<HttpStreamPart> = channelFlow {
         prepare(url, configure).execute { response ->
+            capture?.begin(response.call.request.content)
             send(HttpStreamPart.Head(HttpResponseHead(response.status, response.headers)))
             val channel = response.bodyAsChannel()
             val buffer = ByteArray(8 * 1024)
@@ -51,7 +59,9 @@ class HttpTransport(private val client: HttpClient) {
             }
             channel.closedCause?.let { throw it }
         }
-    }.buffer(0)
+    }.buffer(0).onEach { part ->
+        if (part is HttpStreamPart.Chunk) capture?.append(part.bytes)
+    }
 
     private suspend fun prepare(url: String, configure: HttpRequestBuilder.() -> Unit) =
         client.prepareRequest(url) {

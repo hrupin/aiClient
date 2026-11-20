@@ -3,7 +3,8 @@
 aiClient is a Kotlin Multiplatform library for text generation with OpenAI,
 DeepSeek, xAI, Z.ai, Kimi, and Perplexity. It supports request–response
 generation, streaming with Kotlin Flow, Structured Output validated against
-JSON Schema, and tool calls through Local MCP.
+JSON Schema, image analysis with vision-capable models, and tool calls through
+Local MCP.
 
 Targets include JVM (server and Desktop), Android (API 24+), iOS arm64, and
 iOS Simulator arm64.
@@ -18,12 +19,12 @@ Use `commonMain.dependencies` in a KMP module or the module's
 `dependencies` block in a JVM or Android application.
 
 ```kotlin
-implementation("in.hrup.aiclient:kmp:0.1.1")
+implementation("in.hrup.aiclient:kmp:0.1.2")
 ```
 
 Use a version available in Maven Central. The `kmp` artifact includes
 `core` as a transitive dependency. For domain models and contracts alone,
-use `implementation("in.hrup.aiclient:core:0.1.1")`.
+use `implementation("in.hrup.aiclient:core:0.1.2")`.
 
 ## Dependency injection
 
@@ -209,6 +210,59 @@ Deltas may contain partial JSON. Use `Completed.response.structuredOutput`
 when application logic depends on validated data. If `kimi-k3` starts a
 response with an array wrapper, the adapter collects it before emitting the
 normalized object.
+
+## Image analysis
+
+Use a vision-capable model and pass the prompt and image together in a user
+message. The following models are covered by the live vision suite.
+
+| Provider | Model | Image sources |
+| --- | --- | --- |
+| OpenAI | `gpt-6-luna` | Public URL, Base64 |
+| DeepSeek | `deepseek-flash` | Public URL, Base64 |
+| xAI | `grok-4.7` | Public URL, Base64 |
+| Z.ai | `glm-5v-turbo` | Public URL, Base64 |
+| Kimi | `kimi-k3.1-pro` | Public URL converted to Base64 by aiClient, or Base64 |
+| Perplexity Agent API | `openai/gpt-5.6-luna` | Public HTTPS URL, Base64 |
+
+For inline data, pass the image bytes as plain Base64 with their media type.
+Kimi's endpoint accepts inline Base64. When you supply a URL for Kimi,
+aiClient downloads the image using the application's HTTP client, validates
+the response media type and a 32 MiB per-image limit, and sends a Base64 data
+URL to Kimi. Pass trusted image URLs to this client-side download path.
+
+```kotlin
+import `in`.hrup.aiclient.model.conversation.AiContentPart
+import `in`.hrup.aiclient.model.conversation.AiImageSource
+import `in`.hrup.aiclient.model.conversation.AiMessage
+import `in`.hrup.aiclient.model.conversation.AiRole
+import `in`.hrup.aiclient.model.generation.AiModel
+import `in`.hrup.aiclient.model.generation.AiRequest
+
+val image = AiImageSource.Url("https://example.com/image.jpg")
+// For local bytes, use AiImageSource.Base64(encodedImage, "image/jpeg").
+val visionRequest = AiRequest(
+    model = AiModel("gpt-6-luna"),
+    input = listOf(AiMessage(AiRole.USER, listOf(
+        AiContentPart.Text("Describe this image."),
+        AiContentPart.Image(image),
+    ))),
+)
+val description = ai.generate(visionRequest, provider = AiProviderId.OPENAI).content
+```
+
+For streaming, pass the same request to `ai.stream()`. To require a JSON
+Schema in either mode, set `responseFormat` in the request. aiClient builds
+the data URL for Base64 inputs. The captured request body includes the image
+URL or Base64 data, so account for image contents when retaining logs.
+
+Run the opt-in vision tests for each provider and image source across all
+four modes.
+
+```sh
+./gradlew :infrastructure:openAiVisionIntegrationTest
+./gradlew :infrastructure:providerVisionIntegrationTest
+```
 
 ## Final results and provider logging
 
@@ -460,6 +514,8 @@ You can also run individual integration tasks.
 | Provider or scenario | Gradle task |
 | --- | --- |
 | OpenAI | `:infrastructure:openAiIntegrationTest` |
+| OpenAI image analysis | `:infrastructure:openAiVisionIntegrationTest` |
+| Other providers' image analysis | `:infrastructure:providerVisionIntegrationTest` |
 | DeepSeek | `:infrastructure:deepSeekIntegrationTest` |
 | xAI | `:infrastructure:xaiIntegrationTest` |
 | Z.ai | `:infrastructure:zaiIntegrationTest` |

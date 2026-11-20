@@ -6,6 +6,7 @@ import `in`.hrup.aiclient.infrastructure.providers.text.TextProviderHttp
 import `in`.hrup.aiclient.infrastructure.providers.text.generateResponses
 import `in`.hrup.aiclient.infrastructure.providers.text.streamResponses
 import `in`.hrup.aiclient.infrastructure.providers.text.textMessages
+import `in`.hrup.aiclient.infrastructure.providers.text.responsesContent
 import `in`.hrup.aiclient.infrastructure.structured.JsonStructuredOutput
 import `in`.hrup.aiclient.model.generation.AiRequest
 import `in`.hrup.aiclient.model.generation.AiResponse
@@ -38,7 +39,7 @@ class PerplexityAgentProvider(
     }
 
     private fun AiRequest.toPayload(structured: JsonStructuredOutput?): PerplexityRequest {
-        val input = textMessages(http.provider)
+        val input = textMessages(http.provider, ::responsesContent)
         return PerplexityRequest(
             model = model.id,
             input = input,

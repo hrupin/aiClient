@@ -22,6 +22,8 @@ kotlin {
         val liveTextTestPackage = "in.hrup.aiclient.infrastructure.providers"
         val integrationTests = mapOf(
             "openAiIntegrationTest" to "$openAiTestPackage.OpenAiLiveIntegrationTest",
+            "openAiVisionIntegrationTest" to "$openAiTestPackage.OpenAiVisionIntegrationTest",
+            "providerVisionIntegrationTest" to "$openAiTestPackage.ProviderVisionIntegrationTest",
             "mcpToolsIntegrationTest" to "in.hrup.aiclient.infrastructure.mcp.McpToolsIntegrationTest",
             "openAiRemoteMcpIntegrationTest" to "$openAiTestPackage.OpenAiRemoteMcpIntegrationTest",
             "deepSeekIntegrationTest" to "$liveTextTestPackage.DeepSeekLiveIntegrationTest",

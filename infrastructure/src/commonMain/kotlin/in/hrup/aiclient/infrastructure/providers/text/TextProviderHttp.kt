@@ -25,8 +25,8 @@ import kotlinx.coroutines.flow.catch
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
@@ -125,7 +125,7 @@ private fun JsonElement?.asText(): String? =
     (this as? JsonPrimitive)?.takeUnless { it == JsonNull }?.content
 
 @Serializable
-internal data class TextMessage(val role: String, val content: String)
+internal data class TextMessage(val role: String, val content: JsonElement)
 
 @Serializable
 internal data class TextUsage(
@@ -138,18 +138,17 @@ internal data class TextUsage(
     fun toAiUsage() = AiUsage(inputTokens ?: promptTokens, outputTokens ?: completionTokens, totalTokens)
 }
 
-internal fun AiRequest.textMessages(provider: String): List<TextMessage> {
+internal fun AiRequest.textMessages(
+    provider: String,
+    encodeContent: (List<AiContentPart>) -> JsonElement,
+): List<TextMessage> {
     require(tools.isEmpty()) { "$provider tool calling is unavailable in this adapter" }
     require(input.isNotEmpty()) { "$provider input must contain a message" }
     return input.map { item ->
         require(item is AiMessage) { "$provider input must contain only messages" }
         require(item.role != AiRole.DEVELOPER) { "$provider text adapter supports system, user and assistant messages" }
         require(item.content.isNotEmpty()) { "$provider messages must contain text" }
-        val content = item.content.joinToString("") { part ->
-            require(part is AiContentPart.Text) { "$provider text adapter accepts text content only" }
-            part.text
-        }
-        TextMessage(item.role.name.lowercase(), content)
+        TextMessage(item.role.name.lowercase(), encodeContent(item.content))
     }
 }
 

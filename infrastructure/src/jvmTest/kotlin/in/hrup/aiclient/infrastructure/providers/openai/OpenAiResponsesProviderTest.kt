@@ -97,14 +97,25 @@ class OpenAiResponsesProviderTest {
     }
 
     @Test
-    fun rejectsImageInputBeforeSendingRequest() = runBlocking {
-        HttpClient(MockEngine { error("Unexpected HTTP request") }).use { client ->
+    fun sendsTextAndImagesInOrder() = runBlocking {
+        HttpClient(MockEngine { call ->
+            val body = assertIs<OutgoingContent.ByteArrayContent>(call.body).bytes().decodeToString()
+            val expected = """{"model":"test-model","input":[{"role":"user","content":[
+                {"type":"input_text","text":"Compare"},
+                {"type":"input_image","image_url":"https://example.test/image.png"},
+                {"type":"input_image","image_url":"data:image/png;base64,AA=="}
+            ]}]}"""
+            assertEquals(Json.parseToJsonElement(expected), Json.parseToJsonElement(body))
+            respond("""{"status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"Done"}]}]}""")
+        }).use { client ->
             val provider = OpenAiResponsesProvider(HttpTransport(client), "test-key")
-            val image = AiContentPart.Image(AiImageSource.Url("https://example.test/image.png"))
-            val input = request.copy(input = listOf(AiMessage(AiRole.USER, listOf(image))))
-            assertFailsWith<IllegalArgumentException> { provider.generate(input) }
+            val input = request.copy(input = listOf(AiMessage(AiRole.USER, listOf(
+                AiContentPart.Text("Compare"),
+                AiContentPart.Image(AiImageSource.Url("https://example.test/image.png")),
+                AiContentPart.Image(AiImageSource.Base64("AA==", "image/png")),
+            ))))
+            assertEquals("Done", provider.generate(input).content)
         }
-        Unit
     }
 
     @Test

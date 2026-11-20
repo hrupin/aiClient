@@ -8,6 +8,7 @@ import `in`.hrup.aiclient.infrastructure.providers.xai.XaiResponsesProvider
 import `in`.hrup.aiclient.infrastructure.providers.zai.ZaiChatProvider
 import `in`.hrup.aiclient.infrastructure.structured.parseJsonResponseFormat
 import `in`.hrup.aiclient.model.conversation.AiContentPart
+import `in`.hrup.aiclient.model.conversation.AiImageSource
 import `in`.hrup.aiclient.model.conversation.AiMessage
 import `in`.hrup.aiclient.model.conversation.AiRole
 import `in`.hrup.aiclient.model.generation.AiModel
@@ -212,6 +213,24 @@ class TextProviderAdaptersTest {
                     KimiChatProvider(HttpTransport(client), "test-key").generate(request)
                 }
             }
+        }
+    }
+
+    @Test
+    fun kimiRejectsNonImageDownloadsBeforeCallingTheProvider() = runBlocking {
+        HttpClient(MockEngine { call ->
+            assertEquals("image.example", call.url.host)
+            assertEquals(HttpMethod.Get, call.method)
+            assertEquals(null, call.headers[HttpHeaders.Authorization])
+            respond("<html>not an image</html>", headers = headersOf(HttpHeaders.ContentType, "text/html"))
+        }).use { client ->
+            val provider = KimiChatProvider(HttpTransport(client), "test-key")
+            val request = AiRequest(
+                AiModel("kimi-k3.1-pro"),
+                listOf(AiMessage(AiRole.USER, listOf(AiContentPart.Image(AiImageSource.Url("https://image.example/test"))))),
+            )
+            val error = assertFailsWith<IllegalStateException> { provider.generate(request) }
+            assertTrue("unsupported media type" in error.message.orEmpty())
         }
     }
 

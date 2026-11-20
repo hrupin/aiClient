@@ -47,8 +47,8 @@ coroutine when the caller no longer needs the result.
 
 ### Conversation input
 
-`AiRequest.input` is an ordered list of conversation items. The current
-provider adapters accept text in `AiMessage` items. Use `SYSTEM` for durable
+`AiRequest.input` is an ordered list of conversation items. Provider adapters
+accept text in `AiMessage` items. Use `SYSTEM` for durable
 instructions, `USER` for user turns, and `ASSISTANT` for previous assistant
 turns. `DEVELOPER` is adapter- and model-dependent. The built-in chat request
 mapping for Kimi, Z.ai, xAI, and Perplexity rejects that role, as does
@@ -58,9 +58,20 @@ The application stores conversation history and supplies it on each turn.
 Append assistant messages from the final response once. For a streamed turn,
 use the message in `Completed.response.output` as the history entry.
 
-The domain also defines image content, `AiTool`, `AiToolCall`, and
-`AiToolResult`. The current text adapters expect text-only requests with
-an empty `AiRequest.tools` list. Use the `mcpTools` argument for Local MCP.
+Image input support varies by model. The adapters accept
+`AiContentPart.Image` alongside text for image-capable models. Use
+`AiImageSource.Url` for a publicly reachable image on endpoints that accept
+URLs, or `AiImageSource.Base64` for raw Base64 and a media type. For Kimi,
+aiClient downloads URL inputs and sends the image inline as Base64. The
+download accepts supported image media types up to 32 MiB per image.
+DeepSeek images require `deepseek-flash` and are accepted in
+user, system, and developer messages. For models and sources covered by
+the tests, see the [image analysis examples](../README.md#image-analysis).
+The image input works for buffered and streamed responses, with or without
+JSON Schema.
+
+The current adapters expect an empty `AiRequest.tools` list. Use the
+`mcpTools` argument for Local MCP.
 
 ### Output and events
 

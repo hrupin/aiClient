@@ -4,6 +4,7 @@ import `in`.hrup.aiclient.infrastructure.http.HttpTransport
 import `in`.hrup.aiclient.infrastructure.http.sse.SseResponseException
 import `in`.hrup.aiclient.infrastructure.http.sse.sse
 import `in`.hrup.aiclient.infrastructure.structured.JsonStructuredOutput
+import `in`.hrup.aiclient.infrastructure.providers.text.responsesContent
 import `in`.hrup.aiclient.model.conversation.AiContentPart
 import `in`.hrup.aiclient.model.conversation.AiMessage
 import `in`.hrup.aiclient.model.conversation.AiRole
@@ -184,16 +185,12 @@ class OpenAiResponsesProvider(
     }
 
     private fun AiRequest.toResponsesRequest(structured: JsonStructuredOutput?): ResponsesRequest {
-        require(tools.isEmpty()) { "This OpenAI Responses adapter supports text requests only" }
+        require(tools.isEmpty()) { "This OpenAI Responses adapter does not support tool declarations" }
         require(input.isNotEmpty()) { "OpenAI Responses input must contain a message" }
         return ResponsesRequest(model.id, input.map { item ->
             require(item is AiMessage) { "OpenAI Responses input must contain only messages" }
-            require(item.content.isNotEmpty()) { "OpenAI Responses messages must contain text" }
-            val text = item.content.joinToString("") { part ->
-                require(part is AiContentPart.Text) { "This OpenAI Responses adapter supports text content only" }
-                part.text
-            }
-            ResponsesInputMessage(item.role.name.lowercase(), text)
+            require(item.content.isNotEmpty()) { "OpenAI Responses messages must contain at least one content part" }
+            ResponsesInputMessage(item.role.name.lowercase(), responsesContent(item.content))
         }, text = structured?.let {
             ResponsesText(ResponsesJsonFormat("json_schema", requireNotNull(responseFormat).name, true, it.definition))
         })

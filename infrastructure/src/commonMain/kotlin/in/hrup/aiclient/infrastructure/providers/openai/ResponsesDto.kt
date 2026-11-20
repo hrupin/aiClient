@@ -2,6 +2,7 @@ package `in`.hrup.aiclient.infrastructure.providers.openai
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 
 @Serializable
@@ -24,7 +25,7 @@ internal data class ResponsesJsonFormat(
 )
 
 @Serializable
-internal data class ResponsesInputMessage(val role: String, val content: String)
+internal data class ResponsesInputMessage(val role: String, val content: JsonElement)
 
 @Serializable
 internal data class ResponsesResponse(

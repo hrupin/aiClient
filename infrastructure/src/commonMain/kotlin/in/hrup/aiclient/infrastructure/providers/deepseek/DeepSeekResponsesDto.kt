@@ -2,6 +2,7 @@ package `in`.hrup.aiclient.infrastructure.providers.deepseek
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 
 @Serializable
@@ -13,7 +14,7 @@ internal data class DeepSeekRequest(
 )
 
 @Serializable
-internal data class DeepSeekMessage(val role: String, val content: String)
+internal data class DeepSeekMessage(val role: String, val content: JsonElement)
 
 @Serializable
 internal data class DeepSeekText(val format: DeepSeekFormat)

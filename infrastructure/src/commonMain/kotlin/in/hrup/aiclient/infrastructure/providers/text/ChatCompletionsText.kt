@@ -13,10 +13,12 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 
 internal class ChatCompletionsText(
     private val http: TextProviderHttp,
     private val nativeSchemaModels: Set<String> = emptySet(),
+    private val allowsRemoteImageUrls: Boolean = true,
 ) {
     suspend fun generate(request: AiRequest, normalizeStructured: ((String) -> String)? = null): AiResponse {
         val structured = request.responseFormat?.let(::JsonStructuredOutput)
@@ -86,7 +88,7 @@ internal class ChatCompletionsText(
     }
 
     private fun AiRequest.toPayload(structured: JsonStructuredOutput?): ChatRequest {
-        val messages = textMessages(http.provider)
+        val messages = textMessages(http.provider) { chatContent(it, http.provider, allowsRemoteImageUrls) }
         return if (structured == null) {
             ChatRequest(model.id, messages)
         } else if (model.id in nativeSchemaModels) {
@@ -98,8 +100,10 @@ internal class ChatCompletionsText(
         } else {
             val instruction = TextMessage(
                 role = "system",
-                content = "Return exactly one JSON object matching the following JSON Schema. " +
-                    "Do not include Markdown or any text outside the JSON object.\n${structured.definition}",
+                content = JsonPrimitive(
+                    "Return exactly one JSON object matching the following JSON Schema. " +
+                        "Do not include Markdown or any text outside the JSON object.\n${structured.definition}",
+                ),
             )
             ChatRequest(model.id, listOf(instruction) + messages, ChatResponseFormat("json_object"))
         }

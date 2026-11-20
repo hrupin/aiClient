@@ -4,6 +4,7 @@ import `in`.hrup.aiclient.infrastructure.http.HttpTransport
 import `in`.hrup.aiclient.infrastructure.providers.text.ProviderResponseException
 import `in`.hrup.aiclient.infrastructure.providers.text.TextProviderHttp
 import `in`.hrup.aiclient.infrastructure.providers.text.streamResponses
+import `in`.hrup.aiclient.infrastructure.providers.text.responsesContent
 import `in`.hrup.aiclient.infrastructure.structured.JsonStructuredOutput
 import `in`.hrup.aiclient.model.conversation.AiContentPart
 import `in`.hrup.aiclient.model.conversation.AiMessage
@@ -139,11 +140,11 @@ class DeepSeekResponsesProvider(
                     "DeepSeek V4 Pro treats developer messages as user messages. Use an explicit system message."
                 }
                 require(item.content.isNotEmpty()) { "DeepSeek messages must contain text" }
-                val content = item.content.joinToString("") { part ->
-                    require(part is AiContentPart.Text) { "This DeepSeek adapter accepts text content only" }
-                    part.text
+                if (item.content.any { it is AiContentPart.Image }) {
+                    require(model == "deepseek-flash") { "DeepSeek image input requires deepseek-flash" }
+                    require(item.role != AiRole.ASSISTANT) { "DeepSeek does not accept images in assistant messages" }
                 }
-                DeepSeekMessage(item.role.name.lowercase(), content)
+                DeepSeekMessage(item.role.name.lowercase(), responsesContent(item.content))
             },
             text = structured?.let {
                 DeepSeekText(DeepSeekFormat("json_schema", requireNotNull(responseFormat).name, it.definition))

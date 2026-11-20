@@ -6,6 +6,7 @@ import `in`.hrup.aiclient.infrastructure.providers.text.TextProviderHttp
 import `in`.hrup.aiclient.infrastructure.providers.text.generateResponses
 import `in`.hrup.aiclient.infrastructure.providers.text.streamResponses
 import `in`.hrup.aiclient.infrastructure.providers.text.textMessages
+import `in`.hrup.aiclient.infrastructure.providers.text.responsesContent
 import `in`.hrup.aiclient.infrastructure.structured.JsonStructuredOutput
 import `in`.hrup.aiclient.model.generation.AiRequest
 import `in`.hrup.aiclient.model.generation.AiResponse
@@ -15,6 +16,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 
 class XaiResponsesProvider(
@@ -37,10 +39,11 @@ class XaiResponsesProvider(
     }
 
     private fun AiRequest.toPayload(structured: JsonStructuredOutput?): XaiRequest {
-        val input = textMessages(http.provider)
+        val input = textMessages(http.provider, ::responsesContent)
         return XaiRequest(
             model = model.id,
             input = input,
+            store = if (input.any { it.content is JsonArray }) false else null,
             text = structured?.let { XaiText(XaiFormat("json_schema", requireNotNull(responseFormat).name, it.definition, strict = true)) },
         )
     }
@@ -52,6 +55,7 @@ private data class XaiRequest(
     val input: List<TextMessage>,
     val text: XaiText? = null,
     val stream: Boolean = false,
+    val store: Boolean? = null,
 )
 
 @Serializable

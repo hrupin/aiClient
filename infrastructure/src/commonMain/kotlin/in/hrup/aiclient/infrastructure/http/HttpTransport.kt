@@ -31,6 +31,9 @@ class HttpTransport internal constructor(
 ) {
     constructor(client: HttpClient) : this(client, null)
 
+    internal fun withoutExchangeCapture(): HttpTransport =
+        if (capture == null) this else HttpTransport(client)
+
     /** Returns the response for any HTTP status, including error statuses. */
     suspend fun execute(
         url: String,

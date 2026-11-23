@@ -19,12 +19,12 @@ Use `commonMain.dependencies` in a KMP module or the module's
 `dependencies` block in a JVM or Android application.
 
 ```kotlin
-implementation("in.hrup.aiclient:kmp:0.1.6")
+implementation("in.hrup.aiclient:kmp:0.1.7")
 ```
 
 Use a version available in Maven Central. The `kmp` artifact includes
 `core` as a transitive dependency. For domain models and contracts alone,
-use `implementation("in.hrup.aiclient:core:0.1.6")`.
+use `implementation("in.hrup.aiclient:core:0.1.7")`.
 
 ## Dependency injection
 
@@ -97,12 +97,17 @@ import `in`.hrup.aiclient.toJson
 
 val modelsByProvider = AiCatalog.modelsByProvider
 val deepSeekModels = modelsByProvider.getValue(AiProviderId.DEEPSEEK)
+val defaultModel = AiCatalog.getDefaultModel(AiProviderId.DEEPSEEK)
 val selected = AiCatalog.getModel("deepseek:deepseek-flash")
 
 val catalogJson = modelsByProvider.toJson()
 val deepSeekJson = deepSeekModels.toJson()
 val selectedJson = selected.toJson()
 ```
+
+`getDefaultModel(provider)` returns the provider's built-in default as an
+`AiCatalogModel`. A client can override its default through
+`AiProviderConfig.defaultModel`.
 
 Each model includes a `key`, such as `deepseek:deepseek-flash`, with the
 provider name in lowercase. All three `toJson()` formats include it on

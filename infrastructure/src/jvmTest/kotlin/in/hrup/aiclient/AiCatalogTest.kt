@@ -11,6 +11,16 @@ import kotlin.test.assertSame
 
 class AiCatalogTest {
     @Test
+    fun returnsTheBuiltInDefaultModelForEachProvider() {
+        for (provider in AiProviderId.entries) {
+            val model = AiCatalog.getDefaultModel(provider)
+            assertEquals(provider, model.provider)
+            assertEquals(provider.defaultModelId, model.modelId)
+            assertSame(model, AiCatalog.getModel(model.key))
+        }
+    }
+
+    @Test
     fun resolvesAKeyToTheCatalogEntry() {
         val model = AiCatalog.modelsByProvider.getValue(AiProviderId.PERPLEXITY).first()
         assertEquals("perplexity:${model.modelId}", model.key)

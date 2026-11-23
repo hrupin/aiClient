@@ -29,6 +29,10 @@ object AiCatalog {
 
     /** Looks up an exact catalog key in `provider:modelId` format with a lowercase provider name. */
     fun getModel(key: String): AiCatalogModel? = modelsByKey[key]
+
+    /** Returns the provider's built-in default model. */
+    fun getDefaultModel(provider: AiProviderId): AiCatalogModel =
+        modelsByProvider.getValue(provider).first { it.modelId == provider.defaultModelId }
 }
 
 fun Map<AiProviderId, List<AiCatalogModel>>.toJson(): String = Json.encodeToString(this)

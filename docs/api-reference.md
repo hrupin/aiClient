@@ -61,6 +61,12 @@ must exactly match an `AiCatalogModel.key`, including the lowercase
 provider name and the model ID's original casing. The method returns
 `AiCatalogModel?`, with `null` when no key matches.
 
+`AiCatalog.getDefaultModel(provider)` returns the built-in default as an
+`AiCatalogModel`. For example, `AiCatalog.getDefaultModel(AiProviderId.OPENAI)`
+returns the entry with key `openai:gpt-6-luna`. This lookup uses the
+provider's built-in default. A configured `AiProviderConfig.defaultModel`
+takes precedence for generation calls that omit the `model` argument.
+
 Import `` `in`.hrup.aiclient.toJson `` to encode catalog results as JSON strings.
 Every model object includes `modelId`, `provider`, and `key`.
 

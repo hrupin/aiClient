@@ -13,6 +13,7 @@ the behavior of its provider and MCP adapters.
 | `AiProviderConfig` | Holds the API key, optional default model, and optional full endpoint URL. |
 | `McpServerConfig` | Holds the endpoint and connection headers for one MCP server. |
 | `AiProviderId` | Identifies OpenAI, DeepSeek, xAI, Z.ai, Kimi, Perplexity, or BFL. Its `apiKeySetting` property gives the key setting name used in diagnostics. |
+| `AiCatalog` | Exposes the bundled catalog as `modelsByProvider`, a `Map<AiProviderId, List<AiCatalogModel>>`. Each entry has a `modelId` and a `provider`. |
 
 These types are in the `in.hrup.aiclient` package. Kotlin imports escape the
 first segment as `` `in` ``.
@@ -25,6 +26,33 @@ The optional [HTTP client factory](../infrastructure/src/commonMain/kotlin/in/hr
 uses platform Ktor engines, disables redirects, and sets connection and socket
 timeouts of 10 and 60 seconds. Pass a Ktor client from the application's DI
 container when it already owns transport configuration.
+
+### Model catalog
+
+`AiCatalog.modelsByProvider` contains the bundled models grouped by
+`AiProviderId`. The catalog is available without creating an `AiClient`,
+supplying API keys, or making network requests. Access to a listed model
+depends on the provider and your account.
+
+Each `AiCatalogModel` carries both the `provider` and `modelId`, so the
+selected entry has everything needed to specify the provider and model.
+
+```kotlin
+import `in`.hrup.aiclient.AiCatalog
+import `in`.hrup.aiclient.AiProviderId
+
+val modelsByProvider = AiCatalog.modelsByProvider
+val selected = modelsByProvider.getValue(AiProviderId.DEEPSEEK).first()
+
+val response = ai.generate(
+    prompt = "Explain Kotlin Flow in one sentence.",
+    provider = selected.provider,
+    model = selected.modelId,
+)
+```
+
+For a model from the `AiProviderId.BFL` group, pass its `modelId` to
+`ai.generateImage(prompt = prompt, model = selected.modelId)`.
 
 ## Generation
 

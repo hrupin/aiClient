@@ -19,12 +19,12 @@ Use `commonMain.dependencies` in a KMP module or the module's
 `dependencies` block in a JVM or Android application.
 
 ```kotlin
-implementation("in.hrup.aiclient:kmp:0.1.3")
+implementation("in.hrup.aiclient:kmp:0.1.4")
 ```
 
 Use a version available in Maven Central. The `kmp` artifact includes
 `core` as a transitive dependency. For domain models and contracts alone,
-use `implementation("in.hrup.aiclient:core:0.1.3")`.
+use `implementation("in.hrup.aiclient:core:0.1.4")`.
 
 ## Dependency injection
 
@@ -91,13 +91,18 @@ keys for the providers your application uses. A missing or blank key raises
 Read the bundled catalog without credentials or network access.
 
 ```kotlin
-import `in`.hrup.aiclient.infrastructure.catalog.providerModelCatalog
+import `in`.hrup.aiclient.AiCatalog
+import `in`.hrup.aiclient.AiProviderId
 
-val deepSeekModels = providerModelCatalog["deepseek"].orEmpty().map { it.id }
+val modelsByProvider = AiCatalog.modelsByProvider
+val deepSeekModels = modelsByProvider.getValue(AiProviderId.DEEPSEEK)
 ```
 
-Model availability depends on the provider API and your account. The catalog
-also includes BFL models for `generateImage()`.
+Each entry provides a `provider` and a `modelId` to pass as the `provider`
+and `model` arguments to `generate()` or `stream()`. For BFL, pass
+`modelId` as the `model` argument to `generateImage()`. Model availability
+depends on the provider API and your account. See the [catalog usage
+example](docs/api-reference.md#model-catalog) in the API reference.
 
 ## Four generation modes
 

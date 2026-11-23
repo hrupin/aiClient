@@ -23,6 +23,7 @@ import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
+import kotlin.math.sqrt
 
 class BflImageException(
     message: String,
@@ -51,20 +52,25 @@ class BflImageProvider(
         prompt: String,
         model: String = "flux-3-image",
         outputFormat: AiImageFormat? = null,
-    ): AiImageResponse = generate(prompt, emptyList(), model, outputFormat)
+        width: Int? = null,
+        height: Int? = null,
+    ): AiImageResponse = generate(prompt, emptyList(), model, outputFormat, width, height)
 
     suspend fun generate(
         prompt: String,
         images: List<AiImageSource>,
         model: String = "flux-3-image",
         outputFormat: AiImageFormat? = null,
+        width: Int? = null,
+        height: Int? = null,
     ): AiImageResponse {
         require(prompt.isNotBlank()) { "Image prompt must not be blank" }
         require(model.matches(Regex("flux-[23]-(?!video(?:-|$))[a-z0-9-]+"))) { "Invalid BFL image model: $model" }
         require(outputFormat == null || model != "flux-3-image") {
             "flux-3-image does not support outputFormat. Use flux-3-image-klein or a FLUX.2 image model."
         }
-        val request = imageRequestBody(prompt, images, model, outputFormat)
+        val (outputWidth, outputHeight) = normalizeDimensions(model, width, height, hasReferences = images.isNotEmpty())
+        val request = imageRequestBody(prompt, images, model, outputFormat, outputWidth, outputHeight)
         return withTimeout(120_000) {
             val submission = transport.execute("${baseUrl.trimEnd('/')}/$model") {
                 method = HttpMethod.Post
@@ -80,11 +86,56 @@ class BflImageProvider(
         }
     }
 
+    private fun normalizeDimensions(
+        model: String,
+        width: Int?,
+        height: Int?,
+        hasReferences: Boolean,
+    ): Pair<Int?, Int?> {
+        if (width == null && height == null) return null to null
+        require(!model.startsWith("flux-3-") || (width != null && height != null)) {
+            "$model requires width and height together"
+        }
+
+        val minSide = when (model) {
+            "flux-3-image" -> 256
+            "flux-3-image-klein" -> 64
+            else -> {
+                val minimum = if (model.startsWith("flux-2-")) 64 else 1
+                require((width == null || width >= minimum) && (height == null || height >= minimum)) {
+                    "$model requires each supplied dimension to be at least $minimum pixels"
+                }
+                return width to height
+            }
+        }
+        val step = 16
+        fun roundSide(side: Int): Int = (side.coerceIn(minSide, 6256) + step / 2) / step * step
+
+        var outputWidth = roundSide(checkNotNull(width))
+        var outputHeight = roundSide(checkNotNull(height))
+        val isFlux3Image = model == "flux-3-image"
+        val maxPixels = if (isFlux3Image && hasReferences) 4_194_304 else 16_822_272
+        val pixels = outputWidth * outputHeight
+        if (pixels > maxPixels) {
+            val scale = sqrt(maxPixels.toDouble() / pixels)
+            // Round down after scaling so the result stays within the pixel budget.
+            outputWidth = (outputWidth * scale).toInt() / step * step
+            outputHeight = (outputHeight * scale).toInt() / step * step
+        }
+        if (isFlux3Image) {
+            outputWidth = minOf(outputWidth, outputHeight * 8)
+            outputHeight = minOf(outputHeight, outputWidth * 8)
+        }
+        return outputWidth to outputHeight
+    }
+
     private fun imageRequestBody(
         prompt: String,
         images: List<AiImageSource>,
         model: String,
         outputFormat: AiImageFormat?,
+        width: Int?,
+        height: Int?,
     ): String {
         val maxImages = when {
             model.startsWith("flux-3-") -> 10
@@ -96,6 +147,8 @@ class BflImageProvider(
         return buildJsonObject {
             put("prompt", prompt)
             outputFormat?.let { put("output_format", it.name.lowercase()) }
+            width?.let { put("width", it) }
+            height?.let { put("height", it) }
             if (references.isNotEmpty()) {
                 if (model.startsWith("flux-3-")) {
                     putJsonArray("images") { references.forEach { add(it) } }

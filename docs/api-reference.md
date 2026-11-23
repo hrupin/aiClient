@@ -196,7 +196,7 @@ test covers provider-managed MCP separately.
 
 ## Image generation
 
-`AiClient.generateImage(prompt, model, outputFormat)` currently uses Black Forest Labs.
+`AiClient.generateImage(prompt, model, outputFormat, width, height)` uses Black Forest Labs.
 The overload with `images` accepts ordered
 `AiImageSource.Url` or `AiImageSource.Base64` references for editing.
 FLUX 3 receives the references in `images` and accepts up to ten.
@@ -207,6 +207,23 @@ Set `outputFormat` to `AiImageFormat.PNG` or `AiImageFormat.JPEG` for
 generation or editing with FLUX 3 Image Klein and FLUX.2. An explicit format
 with `flux-3-image` raises `IllegalArgumentException` before submission.
 Omit the argument to use the provider default.
+
+Both overloads accept optional integer `width` and `height` in pixels.
+Omit both to let BFL choose the dimensions. FLUX 3 requires both dimensions
+when specifying a size.
+
+For FLUX 3 Image and FLUX 3 Image Klein, the client clamps each side to the
+model's range and rounds to the nearest multiple of 16, rounding ties up.
+If the area exceeds the limit, it scales both sides down and rounds them
+down to multiples of 16. For FLUX 3 Image, it then shortens the longer
+side if needed to meet the aspect ratio limit. The `request` field contains
+the dimensions actually sent to BFL.
+
+| Model | Pixels per side | Output limits |
+| --- | --- | --- |
+| `flux-3-image` | 256–6256 | Up to 16,822,272 pixels, or 4,194,304 with references. The longer side can be at most 8 times the shorter side. See the [BFL size guide](https://docs.bfl.ml/guides/prompting_unified_technical.md#resolution) and [API reference](https://docs.bfl.ml/api-reference/utility/generate-an-image-with-flux-3.md). |
+| `flux-3-image-klein` | 64–6256 | Up to 16,822,272 pixels. See the [BFL Klein API reference](https://docs.bfl.ml/api-reference/utility/generate-an-image-with-flux-3-klein.md). |
+| FLUX.2 | At least 64 | BFL advertises up to 4 MP output. The client validates the per-side minimum and leaves the output limit to BFL. See the [BFL model overview](https://docs.bfl.ml/flux_2/flux2_overview.md) and [OpenAPI schema](https://api.bfl.ai/openapi.json). |
 
 The client checks the `BFL_API_KEY` configuration before submitting a request. The
 model argument overrides `AiProviderConfig.defaultModel`, which defaults to
@@ -225,7 +242,7 @@ response raises `BflImageException` with the HTTP status and response body.
 | `provider`, `model` | Provider ID `bfl` and the requested FLUX model. |
 | `requestId` | BFL task ID. |
 | `imageUrl` | Temporary delivery URL for the generated or edited image. |
-| `request` | The submission JSON, including any reference images and output format. |
+| `request` | The submission JSON, including any reference images, output format, and dimensions. |
 | `response` | The original JSON body of the final polling response. |
 | `costCredits` | Settled cost in BFL credits if reported, otherwise the price quoted at submission. Returns `null` if neither response includes a cost. |
 

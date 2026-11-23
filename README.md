@@ -277,6 +277,8 @@ val result = ai.generateImage(
     prompt = "A small blue ceramic cup on a plain white background.",
     model = "flux-3-image-klein",
     outputFormat = AiImageFormat.PNG,
+    width = 1024,
+    height = 768,
 )
 println(result.imageUrl)
 println(result.costCredits)
@@ -285,6 +287,12 @@ println(result.costCredits)
 Use `AiImageFormat.PNG` or `AiImageFormat.JPEG` with FLUX 3 Image Klein
 and FLUX.2. FLUX 3 Image (`flux-3-image`) uses the provider's output format.
 Omit `outputFormat` when using that model.
+
+Set `width` and `height` in pixels for generation or editing. Supply both
+together for FLUX 3 Image and FLUX 3 Image Klein. Omit both to let BFL
+choose the dimensions. For these two models, the client rounds each side
+to a multiple of 16 and fits the result within the
+[model's size limits](docs/api-reference.md#image-generation).
 
 Pass `images` to edit or combine existing images. The list preserves input
 order and supports public HTTP(S) URLs and raw Base64.

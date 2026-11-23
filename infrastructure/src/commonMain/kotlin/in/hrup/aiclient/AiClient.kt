@@ -42,7 +42,9 @@ class AiClient(private val httpClient: HttpClient, private val config: AiClientC
         prompt: String,
         model: String? = null,
         outputFormat: AiImageFormat? = null,
-    ): AiImageResponse = generateImage(prompt, emptyList(), model, outputFormat)
+        width: Int? = null,
+        height: Int? = null,
+    ): AiImageResponse = generateImage(prompt, emptyList(), model, outputFormat, width, height)
 
     /** Generates an image using the supplied references in their original order. */
     suspend fun generateImage(
@@ -50,6 +52,8 @@ class AiClient(private val httpClient: HttpClient, private val config: AiClientC
         images: List<AiImageSource>,
         model: String? = null,
         outputFormat: AiImageFormat? = null,
+        width: Int? = null,
+        height: Int? = null,
     ): AiImageResponse {
         val provider = AiProviderId.BFL
         val settings = config.providers[provider]
@@ -57,7 +61,9 @@ class AiClient(private val httpClient: HttpClient, private val config: AiClientC
         val transport = HttpTransport(httpClient)
         val adapter = settings?.endpoint?.let { BflImageProvider(transport, key, it) }
             ?: BflImageProvider(transport, key)
-        return adapter.generate(prompt, images, model ?: settings?.defaultModel ?: provider.defaultModelId, outputFormat)
+        return adapter.generate(
+            prompt, images, model ?: settings?.defaultModel ?: provider.defaultModelId, outputFormat, width, height,
+        )
     }
 
     suspend fun generate(

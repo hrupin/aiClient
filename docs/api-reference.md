@@ -208,23 +208,6 @@ generation or editing with FLUX 3 Image Klein and FLUX.2. An explicit format
 with `flux-3-image` raises `IllegalArgumentException` before submission.
 Omit the argument to use the provider default.
 
-Both overloads accept optional integer `width` and `height` in pixels.
-Omit both to let BFL choose the dimensions. FLUX 3 requires both dimensions
-when specifying a size.
-
-For FLUX 3 Image and FLUX 3 Image Klein, the client clamps each side to the
-model's range and rounds to the nearest multiple of 16, rounding ties up.
-If the area exceeds the limit, it scales both sides down and rounds them
-down to multiples of 16. For FLUX 3 Image, it then shortens the longer
-side if needed to meet the aspect ratio limit. The `request` field contains
-the dimensions actually sent to BFL.
-
-| Model | Pixels per side | Output limits |
-| --- | --- | --- |
-| `flux-3-image` | 256–6256 | Up to 16,822,272 pixels, or 4,194,304 with references. The longer side can be at most 8 times the shorter side. See the [BFL size guide](https://docs.bfl.ml/guides/prompting_unified_technical.md#resolution) and [API reference](https://docs.bfl.ml/api-reference/utility/generate-an-image-with-flux-3.md). |
-| `flux-3-image-klein` | 64–6256 | Up to 16,822,272 pixels. See the [BFL Klein API reference](https://docs.bfl.ml/api-reference/utility/generate-an-image-with-flux-3-klein.md). |
-| FLUX.2 | At least 64 | BFL advertises up to 4 MP output. The client validates the per-side minimum and leaves the output limit to BFL. See the [BFL model overview](https://docs.bfl.ml/flux_2/flux2_overview.md) and [OpenAPI schema](https://api.bfl.ai/openapi.json). |
-
 The client checks the `BFL_API_KEY` configuration before submitting a request. The
 model argument overrides `AiProviderConfig.defaultModel`, which defaults to
 `flux-3-image`. The endpoint setting is a base URL ending in `/v1`, with
@@ -234,6 +217,33 @@ The call submits a job and polls the returned URL until BFL reports
 `Ready`. The overall timeout is 120 seconds. Cancelling the coroutine stops
 local polling. A provider HTTP error, terminal task error, or invalid API
 response raises `BflImageException` with the HTTP status and response body.
+
+### Image dimensions
+
+Both overloads accept optional integer `width` and `height` in pixels for
+generation and editing. Omit both to let BFL choose the dimensions. For
+FLUX 3, supplying only one dimension raises `IllegalArgumentException`.
+
+For FLUX 3 Image and FLUX 3 Image Klein, the client clamps each side to the
+model's range and rounds to the nearest multiple of 16, rounding ties up.
+If the area exceeds the limit, it scales both sides down proportionally
+and rounds them down to multiples of 16. For FLUX 3 Image, it then shortens
+the longer side if needed to meet the 8:1 aspect ratio limit. Read
+`AiImageResponse.request` to see the dimensions sent to BFL.
+
+| Model | Pixels per side | Output limits |
+| --- | --- | --- |
+| `flux-3-image` | 256–6256 | Up to 16,822,272 pixels, or 4,194,304 with references. The longer side can be at most 8 times the shorter side. [BFL size guide](https://docs.bfl.ml/guides/prompting_unified_technical.md#resolution), [API reference](https://docs.bfl.ml/api-reference/utility/generate-an-image-with-flux-3.md) |
+| `flux-3-image-klein` | 64–6256 | Up to 16,822,272 pixels. [BFL Klein API reference](https://docs.bfl.ml/api-reference/utility/generate-an-image-with-flux-3-klein.md) |
+| FLUX.2 | At least 64 | BFL advertises up to 4 MP output. The client checks the per-side minimum and forwards each supplied dimension as given. [BFL model overview](https://docs.bfl.ml/flux_2/flux2_overview.md), [OpenAPI schema](https://api.bfl.ai/openapi.json) |
+
+| Request | Dimensions sent to BFL |
+| --- | --- |
+| `flux-3-image`, 1017 × 775 | 1024 × 768 |
+| `flux-3-image-klein`, 7000 × 896 | 6256 × 896 |
+| `flux-3-image-klein`, 512 × 32 | 512 × 64 |
+| `flux-3-image`, 20 × 3000 | 256 × 2048 |
+| `flux-3-image`, 4096 × 4096 with a reference image | 2048 × 2048 |
 
 ### Image response fields
 

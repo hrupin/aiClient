@@ -19,12 +19,12 @@ Use `commonMain.dependencies` in a KMP module or the module's
 `dependencies` block in a JVM or Android application.
 
 ```kotlin
-implementation("in.hrup.aiclient:kmp:0.1.5")
+implementation("in.hrup.aiclient:kmp:0.1.6")
 ```
 
 Use a version available in Maven Central. The `kmp` artifact includes
 `core` as a transitive dependency. For domain models and contracts alone,
-use `implementation("in.hrup.aiclient:core:0.1.5")`.
+use `implementation("in.hrup.aiclient:core:0.1.6")`.
 
 ## Dependency injection
 
@@ -104,7 +104,9 @@ val deepSeekJson = deepSeekModels.toJson()
 val selectedJson = selected.toJson()
 ```
 
-Use `getModel()` to look up a stored `provider:modelId` key. When the key
+Each model includes a `key`, such as `deepseek:deepseek-flash`, with the
+provider name in lowercase. All three `toJson()` formats include it on
+each model object. Use `getModel()` to look up a stored key. When the key
 cannot be resolved, `getModel()` returns `null` and `toJson()` encodes it
 as the JSON literal `null`.
 

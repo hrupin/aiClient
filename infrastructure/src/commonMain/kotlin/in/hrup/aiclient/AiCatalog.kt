@@ -1,6 +1,8 @@
 package `in`.hrup.aiclient
 
 import `in`.hrup.aiclient.infrastructure.catalog.providerModelCatalog
+import kotlinx.serialization.EncodeDefault
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
@@ -8,7 +10,11 @@ import kotlinx.serialization.json.Json
 data class AiCatalogModel(
     val modelId: String,
     val provider: AiProviderId,
-)
+) {
+    @OptIn(ExperimentalSerializationApi::class)
+    @EncodeDefault
+    val key: String = "${provider.name.lowercase()}:$modelId"
+}
 
 /** Bundled model catalog available without credentials or network access. */
 object AiCatalog {

@@ -13,7 +13,7 @@ the behavior of its provider and MCP adapters.
 | `AiProviderConfig` | Holds the API key, optional default model, and optional full endpoint URL. |
 | `McpServerConfig` | Holds the endpoint and connection headers for one MCP server. |
 | `AiProviderId` | Identifies OpenAI, DeepSeek, xAI, Z.ai, Kimi, Perplexity, or BFL. Its `apiKeySetting` property gives the key setting name used in diagnostics. |
-| `AiCatalog` | Exposes the bundled catalog as `modelsByProvider`, a `Map<AiProviderId, List<AiCatalogModel>>`. Each entry has a `modelId` and a `provider`. |
+| `AiCatalog` | Exposes the bundled catalog as `modelsByProvider`, a `Map<AiProviderId, List<AiCatalogModel>>`. Each entry has a `modelId`, a `provider`, and a `key`. |
 
 These types are in the `in.hrup.aiclient` package. Kotlin imports escape the
 first segment as `` `in` ``.
@@ -54,19 +54,21 @@ val response = ai.generate(
 For a model from the `AiProviderId.BFL` group, pass its `modelId` to
 `ai.generateImage(prompt = prompt, model = selected.modelId)`.
 
-Use `AiCatalog.getModel(key)` to resolve a stored selection in
-`provider:modelId` format, such as `OPENAI:gpt-6-luna`. Provider names are
+Each model's `key` is in `provider:modelId` format, such as
+`openai:gpt-6-luna`. The provider name in the key is lowercase.
+Use `AiCatalog.getModel(key)` to resolve a stored selection. Provider names are
 case-insensitive and model IDs match exactly. The method returns
 `AiCatalogModel?`, with `null` for malformed keys or entries absent from
 the catalog.
 
 Import `` `in`.hrup.aiclient.toJson `` to encode catalog results as JSON strings.
+Every model object includes `modelId`, `provider`, and `key`.
 
 | Call | JSON shape |
 | --- | --- |
 | `AiCatalog.modelsByProvider.toJson()` | Object keyed by `AiProviderId` names, with an array of models per provider. |
 | `AiCatalog.modelsByProvider.getValue(AiProviderId.OPENAI).toJson()` | Array of model objects for OpenAI. |
-| `AiCatalog.getModel("openai:gpt-6-luna").toJson()` | `{"modelId":"gpt-6-luna","provider":"OPENAI"}`. An unresolved key is encoded as the JSON literal `null`. |
+| `AiCatalog.getModel("openai:gpt-6-luna").toJson()` | `{"modelId":"gpt-6-luna","provider":"OPENAI","key":"openai:gpt-6-luna"}`. An unresolved key is encoded as the JSON literal `null`. |
 
 ## Generation
 

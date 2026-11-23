@@ -19,12 +19,12 @@ Use `commonMain.dependencies` in a KMP module or the module's
 `dependencies` block in a JVM or Android application.
 
 ```kotlin
-implementation("in.hrup.aiclient:kmp:0.1.4")
+implementation("in.hrup.aiclient:kmp:0.1.5")
 ```
 
 Use a version available in Maven Central. The `kmp` artifact includes
 `core` as a transitive dependency. For domain models and contracts alone,
-use `implementation("in.hrup.aiclient:core:0.1.4")`.
+use `implementation("in.hrup.aiclient:core:0.1.5")`.
 
 ## Dependency injection
 
@@ -93,10 +93,20 @@ Read the bundled catalog without credentials or network access.
 ```kotlin
 import `in`.hrup.aiclient.AiCatalog
 import `in`.hrup.aiclient.AiProviderId
+import `in`.hrup.aiclient.toJson
 
 val modelsByProvider = AiCatalog.modelsByProvider
 val deepSeekModels = modelsByProvider.getValue(AiProviderId.DEEPSEEK)
+val selected = AiCatalog.getModel("deepseek:deepseek-flash")
+
+val catalogJson = modelsByProvider.toJson()
+val deepSeekJson = deepSeekModels.toJson()
+val selectedJson = selected.toJson()
 ```
+
+Use `getModel()` to look up a stored `provider:modelId` key. When the key
+cannot be resolved, `getModel()` returns `null` and `toJson()` encodes it
+as the JSON literal `null`.
 
 Each entry provides a `provider` and a `modelId` to pass as the `provider`
 and `model` arguments to `generate()` or `stream()`. For BFL, pass

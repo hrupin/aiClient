@@ -1,5 +1,8 @@
 package `in`.hrup.aiclient
 
+import kotlinx.serialization.Serializable
+
+@Serializable
 enum class AiProviderId(internal val defaultModelId: String, val apiKeySetting: String) {
     OPENAI("gpt-6-luna", "OPENAI_API_KEY"),
     DEEPSEEK("deepseek-flash", "DEEPSEEK_API_KEY"),

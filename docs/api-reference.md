@@ -54,6 +54,20 @@ val response = ai.generate(
 For a model from the `AiProviderId.BFL` group, pass its `modelId` to
 `ai.generateImage(prompt = prompt, model = selected.modelId)`.
 
+Use `AiCatalog.getModel(key)` to resolve a stored selection in
+`provider:modelId` format, such as `OPENAI:gpt-6-luna`. Provider names are
+case-insensitive and model IDs match exactly. The method returns
+`AiCatalogModel?`, with `null` for malformed keys or entries absent from
+the catalog.
+
+Import `` `in`.hrup.aiclient.toJson `` to encode catalog results as JSON strings.
+
+| Call | JSON shape |
+| --- | --- |
+| `AiCatalog.modelsByProvider.toJson()` | Object keyed by `AiProviderId` names, with an array of models per provider. |
+| `AiCatalog.modelsByProvider.getValue(AiProviderId.OPENAI).toJson()` | Array of model objects for OpenAI. |
+| `AiCatalog.getModel("openai:gpt-6-luna").toJson()` | `{"modelId":"gpt-6-luna","provider":"OPENAI"}`. An unresolved key is encoded as the JSON literal `null`. |
+
 ## Generation
 
 | Call | Result | When work starts |

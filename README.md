@@ -106,9 +106,9 @@ val selectedJson = selected.toJson()
 
 Each model includes a `key`, such as `deepseek:deepseek-flash`, with the
 provider name in lowercase. All three `toJson()` formats include it on
-each model object. Use `getModel()` to look up a stored key. When the key
-cannot be resolved, `getModel()` returns `null` and `toJson()` encodes it
-as the JSON literal `null`.
+each model object. Pass the stored key as-is to `getModel()`, which matches
+it exactly. When no key matches, `getModel()` returns `null` and
+`toJson()` encodes it as the JSON literal `null`.
 
 Each entry provides a `provider` and a `modelId` to pass as the `provider`
 and `model` arguments to `generate()` or `stream()`. For BFL, pass

@@ -13,9 +13,15 @@ class AiCatalogTest {
     @Test
     fun resolvesAKeyToTheCatalogEntry() {
         val model = AiCatalog.modelsByProvider.getValue(AiProviderId.PERPLEXITY).first()
-        assertSame(model, AiCatalog.getModel("PERPLEXITY:${model.modelId}"))
         assertEquals("perplexity:${model.modelId}", model.key)
         assertSame(model, AiCatalog.getModel(model.key))
+    }
+
+    @Test
+    fun requiresAnExactKey() {
+        val model = AiCatalog.modelsByProvider.getValue(AiProviderId.PERPLEXITY).first()
+        assertNull(AiCatalog.getModel("PERPLEXITY:${model.modelId}"))
+        assertNull(AiCatalog.getModel("perplexity:${model.modelId.uppercase()}"))
     }
 
     @Test
@@ -35,7 +41,7 @@ class AiCatalogTest {
 
     @Test
     fun returnsNullForMalformedKeysAndUnknownEntries() {
-        for (key in listOf("OPENAI", ":gpt-6-luna", "OPENAI:", "UNKNOWN:gpt-6-luna", "BFL:gpt-6-luna")) {
+        for (key in listOf("openai", ":gpt-6-luna", "openai:", "unknown:gpt-6-luna", "bfl:gpt-6-luna")) {
             assertNull(AiCatalog.getModel(key), key)
         }
     }

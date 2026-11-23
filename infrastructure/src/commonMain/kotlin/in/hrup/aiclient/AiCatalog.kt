@@ -25,14 +25,10 @@ object AiCatalog {
             }
         }
 
-    /** Looks up a `provider:modelId` key. Provider names are case-insensitive and model IDs are exact. */
-    fun getModel(key: String): AiCatalogModel? {
-        val providerName = key.substringBefore(':', missingDelimiterValue = "")
-        val provider = AiProviderId.entries.firstOrNull { it.name.equals(providerName, ignoreCase = true) }
-            ?: return null
-        val modelId = key.substringAfter(':')
-        return modelsByProvider[provider]?.firstOrNull { it.modelId == modelId }
-    }
+    private val modelsByKey = modelsByProvider.values.flatten().associateBy(AiCatalogModel::key)
+
+    /** Looks up an exact catalog key in `provider:modelId` format with a lowercase provider name. */
+    fun getModel(key: String): AiCatalogModel? = modelsByKey[key]
 }
 
 fun Map<AiProviderId, List<AiCatalogModel>>.toJson(): String = Json.encodeToString(this)

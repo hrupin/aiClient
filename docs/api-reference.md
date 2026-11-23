@@ -56,10 +56,10 @@ For a model from the `AiProviderId.BFL` group, pass its `modelId` to
 
 Each model's `key` is in `provider:modelId` format, such as
 `openai:gpt-6-luna`. The provider name in the key is lowercase.
-Use `AiCatalog.getModel(key)` to resolve a stored selection. Provider names are
-case-insensitive and model IDs match exactly. The method returns
-`AiCatalogModel?`, with `null` for malformed keys or entries absent from
-the catalog.
+Use `AiCatalog.getModel(key)` to resolve a stored selection. The argument
+must exactly match an `AiCatalogModel.key`, including the lowercase
+provider name and the model ID's original casing. The method returns
+`AiCatalogModel?`, with `null` when no key matches.
 
 Import `` `in`.hrup.aiclient.toJson `` to encode catalog results as JSON strings.
 Every model object includes `modelId`, `provider`, and `key`.

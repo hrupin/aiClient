@@ -43,11 +43,27 @@ class AiClientTest {
     }
 
     @Test
-    fun routesThroughConfiguredProviderModelAndMcpServer() = runBlocking {
+    fun generatesWithMultipleMcpResults() = verifiesMultipleMcpResults(streaming = false)
+
+    @Test
+    fun streamsWithMultipleMcpResults() = verifiesMultipleMcpResults(streaming = true)
+
+    private fun verifiesMultipleMcpResults(streaming: Boolean) = runBlocking {
         var providerCalls = 0
         var finalRequest = ""
-        val finalResponse = """{"id":"provider-response","choices":[{"finish_reason":"stop","message":{"content":"Done"}}],"usage":{"prompt_tokens":10,"completion_tokens":2}}"""
+        val finalResponse = if (streaming) {
+            """data: {"choices":[{"index":0,"delta":{"content":"Done"}}]}
+
+data: {"id":"provider-response","choices":[{"index":0,"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":2}}
+
+data: [DONE]
+
+"""
+        } else {
+            """{"id":"provider-response","choices":[{"finish_reason":"stop","message":{"content":"Done"}}],"usage":{"prompt_tokens":10,"completion_tokens":2}}"""
+        }
         val methods = mutableListOf<String>()
+        val invoked = mutableListOf<String>()
         HttpClient(MockEngine { request ->
             val bytes = assertIs<OutgoingContent.ByteArrayContent>(request.body).bytes()
             val payload = Json.parseToJsonElement(bytes.decodeToString()).jsonObject
@@ -58,10 +74,14 @@ class AiClientTest {
                 val result = when (method) {
                     "initialize" -> """{"protocolVersion":"2025-11-25","capabilities":{"tools":{}}}"""
                     "notifications/initialized" -> return@MockEngine respond("", HttpStatusCode.Accepted)
-                    "tools/list" -> """{"tools":[{"name":"lookup","inputSchema":{"type":"object"}},{"name":"private_tool","inputSchema":{"type":"object"}}]}"""
+                    "tools/list" -> """{"tools":[{"name":"lookup","inputSchema":{"type":"object"}},{"name":"summarize","inputSchema":{"type":"object"}},{"name":"private_tool","inputSchema":{"type":"object"}}]}"""
                     "tools/call" -> {
-                        assertEquals("lookup", payload.getValue("params").jsonObject.getValue("name").jsonPrimitive.content)
-                        """{"content":[{"type":"text","text":"from-mcp"}]}"""
+                        val params = payload.getValue("params").jsonObject
+                        val name = params.getValue("name").jsonPrimitive.content
+                        invoked += name
+                        val expectedArguments = if (name == "lookup") """{"id":42}""" else "{}"
+                        assertEquals(Json.parseToJsonElement(expectedArguments), params.getValue("arguments"))
+                        """{"content":[{"type":"text","text":"result-from-$name"}]}"""
                     }
                     else -> error("Unexpected MCP method")
                 }
@@ -75,13 +95,23 @@ class AiClientTest {
                 assertEquals("override-model", payload.getValue("model").jsonPrimitive.content)
                 if (++providerCalls == 1) {
                     assertTrue("lookup" in payload.toString())
+                    assertTrue("summarize" in payload.toString())
                     assertFalse("private_tool" in payload.toString())
-                    val plan = JsonPrimitive("""{"name":"lookup","arguments":"{}"}""")
+                    val plan = JsonPrimitive(
+                        """{"calls":[{"name":"summarize","arguments":"{}"},{"name":"lookup","arguments":"{\"id\":42}"}]}""",
+                    )
                     respond("""{"choices":[{"finish_reason":"stop","message":{"content":$plan}}]}""")
                 } else {
-                    assertTrue("from-mcp" in payload.toString())
+                    assertEquals(listOf("summarize", "lookup"), invoked)
                     finalRequest = bytes.decodeToString()
-                    respond(finalResponse)
+                    val firstResult = finalRequest.indexOf("result-from-summarize")
+                    assertTrue(firstResult >= 0)
+                    assertTrue(finalRequest.indexOf("result-from-lookup") > firstResult)
+                    if (streaming) {
+                        respond(finalResponse, headers = headersOf(HttpHeaders.ContentType, "text/event-stream"))
+                    } else {
+                        respond(finalResponse)
+                    }
                 }
             }
         }).use { http ->
@@ -92,19 +122,29 @@ class AiClientTest {
                     "https://mcp.example", mapOf("Authorization" to "Bearer mcp-auth"),
                 )),
             ))
-            val result = client.generate("Look up the result", model = "override-model", mcpTools = mapOf("lookup-server" to setOf("lookup")))
+            val mcpTools = mapOf("lookup-server" to setOf("lookup", "summarize"))
+            val result = if (streaming) {
+                val flow = client.stream("Look up the result", model = "override-model", mcpTools = mcpTools)
+                assertEquals(0, providerCalls)
+                assertIs<AiStreamEvent.Completed>(flow.toList().last()).response
+            } else {
+                client.generate("Look up the result", model = "override-model", mcpTools = mcpTools)
+            }
             assertEquals(listOf(AiContentPart.Text("Done")), assertIs<AiMessage>(result.output.single()).content)
             assertEquals("Done", result.content)
             assertEquals(finalResponse, result.response)
             assertEquals(finalRequest, result.request)
-            assertTrue("from-mcp" in result.request)
             assertEquals("kimi", result.provider)
             assertEquals("override-model", result.model)
             assertEquals(10L, result.tokensSent)
             assertEquals(2L, result.tokensReceived)
             assertEquals(2, providerCalls)
             assertEquals(
-                listOf("initialize", "notifications/initialized", "tools/list", "initialize", "notifications/initialized", "tools/call"),
+                listOf(
+                    "initialize", "notifications/initialized", "tools/list",
+                    "initialize", "notifications/initialized", "tools/call",
+                    "initialize", "notifications/initialized", "tools/call",
+                ),
                 methods,
             )
         }

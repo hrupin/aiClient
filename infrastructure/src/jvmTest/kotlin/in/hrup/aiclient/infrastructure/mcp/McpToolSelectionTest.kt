@@ -15,10 +15,11 @@ import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertSame
 
 class McpToolSelectionTest {
     @Test
-    fun rejectsUnknownToolsAndInvalidArgumentsBeforeMcpRequest() = runBlocking {
+    fun validatesEveryCallBeforeInvokingAnyTools() = runBlocking {
         HttpClient(MockEngine { error("Unexpected MCP request") }).use { http ->
             val client = StreamableHttpMcpClient(HttpTransport(http), "https://mcp.example", setOf("lookup"))
             val schema = parseJsonResponseFormat(
@@ -27,22 +28,45 @@ class McpToolSelectionTest {
             ).schema
             val tools = listOf(McpAvailableTool(client, AiTool("lookup", "Look up an ID", schema)))
             val request = AiRequest(AiModel("test"), emptyList())
-            assertFailsWith<McpException> { planner("unknown", "{}").generateWithMcpTools(request, tools) }
+            val validCall = "lookup" to """{"id":42}"""
+            assertFailsWith<McpException> {
+                planner(validCall, "unknown" to "{}").generateWithMcpTools(request, tools)
+            }
             assertFailsWith<StructuredOutputException> {
-                planner("lookup", """{"id":"invalid"}""").generateWithMcpTools(request, tools)
+                planner(validCall, "lookup" to """{"id":"invalid"}""").generateWithMcpTools(request, tools)
             }
         }
         Unit
     }
 
-    private fun planner(name: String, arguments: String): AiProvider = object : AiProvider {
+    @Test
+    fun emptyCallArrayPassesTheOriginalRequestThrough() = runBlocking {
+        HttpClient(MockEngine { error("Unexpected MCP request") }).use { http ->
+            val client = StreamableHttpMcpClient(HttpTransport(http), "https://mcp.example", setOf("lookup"))
+            val schema = parseJsonResponseFormat("lookup", """{"type":"object"}""").schema
+            val tools = listOf(McpAvailableTool(client, AiTool("lookup", "Look up an ID", schema)))
+            val request = AiRequest(AiModel("test"), emptyList())
+            val finalResponse = AiResponse(output = emptyList())
+            val provider = planner(onFinal = { actual ->
+                assertSame(request, actual)
+                finalResponse
+            })
+            assertSame(finalResponse, provider.generateWithMcpTools(request, tools))
+        }
+    }
+
+    private fun planner(
+        vararg calls: Pair<String, String>,
+        onFinal: (AiRequest) -> AiResponse = { error("Unexpected final generation") },
+    ): AiProvider = object : AiProvider {
         override suspend fun generate(request: AiRequest): AiResponse {
-            assertEquals("mcp_tool_selection", request.responseFormat?.name)
+            val responseFormat = request.responseFormat ?: return onFinal(request)
+            assertEquals("mcp_tool_selection", responseFormat.name)
             return AiResponse(
                 output = emptyList(),
-                structuredOutput = AiValue.Object(
-                    mapOf("name" to AiValue.Text(name), "arguments" to AiValue.Text(arguments)),
-                ),
+                structuredOutput = AiValue.Object(mapOf("calls" to AiValue.Array(calls.map { (name, arguments) ->
+                    AiValue.Object(mapOf("name" to AiValue.Text(name), "arguments" to AiValue.Text(arguments)))
+                }))),
             )
         }
     }

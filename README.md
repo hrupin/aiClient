@@ -19,12 +19,12 @@ Use `commonMain.dependencies` in a KMP module or the module's
 `dependencies` block in a JVM or Android application.
 
 ```kotlin
-implementation("in.hrup.aiclient:kmp:0.1.7")
+implementation("in.hrup.aiclient:kmp:0.1.8")
 ```
 
 Use a version available in Maven Central. The `kmp` artifact includes
 `core` as a transitive dependency. For domain models and contracts alone,
-use `implementation("in.hrup.aiclient:core:0.1.7")`.
+use `implementation("in.hrup.aiclient:core:0.1.8")`.
 
 ## Dependency injection
 
@@ -538,11 +538,11 @@ val jsonEvents = ai.stream(prompt, responseFormat = modelFormat, mcpTools = cata
 ```
 
 aiClient uses `tools/list` to discover definitions and filters them to the
-requested names. A separate structured generation lets the model select one
-tool and its arguments, or skip tool use. The library checks the name and
-validates the arguments against the tool's `inputSchema` before executing
-`tools/call`. It then passes the result to the model. In streaming mode the
-final answer starts streaming after tool selection and execution. Both model
+requested names. A separate structured generation lets the model select
+zero or more tool calls. The library checks all names and validates all
+arguments against the tools' input schemas before invoking any tool.
+It executes the calls in order and passes all results to the model. In
+streaming mode the final answer starts after tool execution. Both model
 requests use the selected provider and model.
 
 A request can use tools from several configured servers. Available tool names

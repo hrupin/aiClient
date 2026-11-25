@@ -33,7 +33,7 @@ fun StreamingAiProvider.streamWithMcp(request: AiRequest, tools: List<McpToolInv
     }
 }
 
-private suspend fun AiRequest.withMcpResults(tools: List<McpToolInvocation>): AiRequest {
+internal suspend fun AiRequest.withMcpResults(tools: List<McpToolInvocation>): AiRequest {
     var enriched = this
     for (tool in tools) {
         val result = tool.client.callTool(tool.name, tool.arguments)

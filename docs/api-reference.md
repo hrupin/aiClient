@@ -215,12 +215,14 @@ Use distinct tool names across selected servers.
 1. aiClient resolves the provider and checks its key.
 2. The MCP client discovers tools with `tools/list` and keeps only the
    names selected for this request.
-3. If any tools are available, a structured model request selects at most
-   one tool and its arguments. The model may decline to use a tool.
-4. aiClient checks the selected name and validates arguments against the
-   tool's input schema, then calls `tools/call`.
-5. The selected provider generates the final answer with the tool result as
-   context. The caller's response schema applies to this final answer.
+3. If any tools are available, a structured model request returns a
+   `calls` array. Each call has a tool name and a JSON-encoded arguments
+   string. An empty array skips tool execution.
+4. aiClient checks every name and validates each call's arguments against
+   its tool's input schema before invoking any tools. It then executes the
+   calls in array order.
+5. The selected provider generates the final answer with all tool results
+   as context. The caller's response schema applies to this final answer.
 
 All four combinations of buffered or streamed output, with or without a
 response schema, use this same MCP flow. The final stream begins after

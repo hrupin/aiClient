@@ -21,7 +21,7 @@ def build_bundle(staging, version, destination):
         raise SystemExit("Maven Central requires a release version.")
 
     paths = []
-    for module in ("core", "kmp"):
+    for module in ("core", "application", "kmp"):
         for target, extension in TARGETS.items():
             artifact = module + target
             folder = staging / GROUP_PATH / artifact / version

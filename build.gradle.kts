@@ -33,7 +33,11 @@ subprojects {
                 }
                 artifact(documentationJar)
                 pom {
-                    name.set(if (project.name == "core") "aiClient Core" else "aiClient KMP")
+                    name.set(when (project.name) {
+                        "core" -> "aiClient Core"
+                        "application" -> "aiClient Application"
+                        else -> "aiClient KMP"
+                    })
                     description.set("Kotlin Multiplatform client for AI providers, structured output, and MCP tools")
                     url.set("https://github.com/hrupin/aiClient")
                     if (licenseName.isPresent && licenseUrl.isPresent) {

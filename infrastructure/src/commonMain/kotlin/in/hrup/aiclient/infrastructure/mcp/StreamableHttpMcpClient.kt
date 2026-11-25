@@ -7,16 +7,19 @@ import `in`.hrup.aiclient.infrastructure.structured.toAiObject
 import `in`.hrup.aiclient.infrastructure.structured.toJson
 import `in`.hrup.aiclient.model.tool.AiTool
 import `in`.hrup.aiclient.model.value.AiValue
+import io.ktor.client.plugins.retry
 import io.ktor.client.request.HttpRequestBuilder
 import io.ktor.client.request.header
 import io.ktor.client.request.setBody
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpMethod
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.transform
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -30,12 +33,20 @@ import kotlinx.serialization.json.putJsonObject
 class McpException(message: String, cause: Throwable? = null) : IllegalStateException(message, cause)
 
 /** Each operation opens its own session. The caller owns the underlying HTTP client. */
-class StreamableHttpMcpClient(
+class StreamableHttpMcpClient internal constructor(
     private val transport: HttpTransport,
     private val endpoint: String,
-    private val allowedTools: Set<String>,
-    headers: Map<String, String> = emptyMap(),
+    allowedTools: Set<String>,
+    headers: Map<String, String>,
+    internal val serverId: String?,
 ) {
+    constructor(
+        transport: HttpTransport,
+        endpoint: String,
+        allowedTools: Set<String>,
+        headers: Map<String, String> = emptyMap(),
+    ) : this(transport, endpoint, allowedTools, headers, null)
+
     private val requestHeaders = headers.toMap()
     private val permittedTools = allowedTools.toSet()
 
@@ -45,62 +56,89 @@ class StreamableHttpMcpClient(
         }) { "MCP protocol headers are managed by the client" }
     }
 
-    suspend fun listTools(): List<AiTool> = session {
-        val tools = mutableListOf<AiTool>()
-        val seen = mutableSetOf<String>()
-        var cursor: String? = null
-        do {
-            val page = rpc("tools/list", cursor?.let { buildJsonObject { put("cursor", it) } })
-            val entries = page["tools"] as? JsonArray ?: throw McpException("Missing MCP tools list")
-            for (entry in entries) {
-                val tool = entry as? JsonObject ?: throw McpException("Invalid MCP tool")
-                val name = tool.string("name") ?: throw McpException("Missing MCP tool name")
-                if (name !in permittedTools) continue
-                val schema = tool["inputSchema"] as? JsonObject ?: throw McpException("Missing input schema for $name")
-                tools += AiTool(name, tool.string("description").orEmpty(), schema.toAiObject())
-            }
-            cursor = page.string("nextCursor")
-            if (cursor != null && !seen.add(cursor)) throw McpException("MCP server repeated a pagination cursor")
-        } while (cursor != null)
-        tools
+    suspend fun listTools(): List<AiTool> = McpToolOptions().let { options ->
+        options.timed("MCP tool discovery") { listTools(options.maxContextBytes) }
     }
 
-    suspend fun callTool(name: String, arguments: AiValue.Object = AiValue.Object(emptyMap())): AiValue.Object {
+    internal suspend fun listTools(maxResponseBytes: Int): List<AiTool> =
+        session(maxOf(maxResponseBytes, 16 * 1024)) {
+            val tools = mutableListOf<AiTool>()
+            val seen = mutableSetOf<String>()
+            val budget = McpSizeBudget(maxResponseBytes, "MCP tool catalog")
+            var cursor: String? = null
+            do {
+                val params = cursor?.let { buildJsonObject { put("cursor", it) } }
+                val page = rpc("tools/list", params, maxResponseBytes)
+                val entries = page["tools"] as? JsonArray ?: throw McpException("Missing MCP tools list")
+                for (entry in entries) {
+                    val tool = entry as? JsonObject ?: throw McpException("Invalid MCP tool")
+                    val name = tool.string("name") ?: throw McpException("Missing MCP tool name")
+                    if (name !in permittedTools) continue
+                    val schema = tool["inputSchema"] as? JsonObject ?: throw McpException("Missing MCP tool input schema")
+                    val definition = AiTool(name, tool.string("description").orEmpty(), schema.toMcpObject())
+                    budget.text(definition.name)
+                    budget.text(definition.description)
+                    budget.value(definition.inputSchema)
+                    tools += definition
+                }
+                cursor = page.string("nextCursor")
+                if (cursor != null) {
+                    budget.spend(1)
+                    budget.text(cursor)
+                    if (!seen.add(cursor)) throw McpException("MCP server repeated a pagination cursor")
+                }
+            } while (cursor != null)
+            tools
+        }
+
+    suspend fun callTool(name: String, arguments: AiValue.Object = AiValue.Object(emptyMap())): AiValue.Object =
+        McpToolOptions().let { options ->
+            options.timed("MCP tool call") { callTool(name, arguments, options.maxToolResultBytes) }
+        }
+
+    internal suspend fun callTool(name: String, arguments: AiValue.Object, maxResultBytes: Int): AiValue.Object {
         requireAllowed(name)
-        return session {
+        return session(maxOf(maxResultBytes, 16 * 1024)) {
             val result = rpc("tools/call", buildJsonObject {
                 put("name", name)
                 put("arguments", arguments.toJson())
-            })
-            if (result["isError"] == JsonPrimitive(true)) throw McpException("MCP tool $name failed: $result")
-            result.toAiObject()
+            }, maxResultBytes)
+            when (result["isError"]) {
+                JsonPrimitive(true) -> throw McpException("MCP tool reported failure")
+                null, JsonPrimitive(false) -> result.toMcpObject()
+                else -> throw McpException("Invalid MCP tool error flag")
+            }
         }
     }
 
     internal fun requireAllowed(name: String) {
-        require(name in permittedTools) { "MCP tool is not allowed: $name" }
+        require(name in permittedTools) { "MCP tool is not allowed" }
     }
 
-    private suspend fun <T> session(action: suspend Session.() -> T): T {
-        val session = Session()
+    private suspend fun <T> session(maxResponseBytes: Int, action: suspend Session.() -> T): T {
+        val session = Session(maxResponseBytes)
         var failure: Throwable? = null
         try {
             session.initialize()
             return session.action()
         } catch (cause: Throwable) {
-            failure = cause
-            throw cause
+            failure = cause.toPublicMcpFailure("MCP session request failed")
+            throw failure
         } finally {
             try {
-                withContext(NonCancellable) { withTimeout(5_000) { session.close() } }
+                withContext(NonCancellable) {
+                    withTimeoutOrNull(5_000) { session.close() }
+                        ?: throw McpException("MCP session cleanup timed out")
+                }
             } catch (cause: Exception) {
-                if (failure == null) throw cause
-                failure.addSuppressed(cause)
+                val cleanupFailure = cause.toPublicMcpFailure("MCP session cleanup failed")
+                if (failure == null) throw cleanupFailure
+                failure.addSuppressed(cleanupFailure)
             }
         }
     }
 
-    private inner class Session {
+    private inner class Session(private val maxResponseBytes: Int) {
         private var version: String? = null
         private var sessionId: String? = null
         private var sequence = 0
@@ -117,28 +155,35 @@ class StreamableHttpMcpClient(
             version = initialized.string("protocolVersion")
                 ?: throw McpException("MCP initialize response has no protocolVersion")
             if (version !in setOf("2025-11-25", "2025-06-18", "2025-03-26")) {
-                throw McpException("Unsupported MCP protocol version: $version")
+                throw McpException("Unsupported MCP protocol version")
             }
-            val response = transport.execute(endpoint) {
+            val status = status {
                 post("""{"jsonrpc":"2.0","method":"notifications/initialized"}""")
             }
-            if (response.head.status.value != 202) throw McpException("MCP initialized returned HTTP ${response.head.status.value}")
+            if (status != 202) throw McpException("MCP initialized returned HTTP $status")
             val capabilities = initialized["capabilities"] as? JsonObject
             if (capabilities?.get("tools") !is JsonObject) throw McpException("MCP server does not advertise tools")
         }
 
         suspend fun close() {
             if (sessionId == null) return
-            val status = transport.execute(endpoint) {
+            val status = status {
                 method = HttpMethod.Delete
                 sessionHeaders()
-            }.head.status.value
+            }
             if (status !in 200..299 && status != 405 && status != 404) {
                 throw McpException("MCP session deletion returned HTTP $status")
             }
         }
 
-        suspend fun rpc(rpcMethod: String, params: JsonObject?): JsonObject {
+        private suspend fun status(configure: HttpRequestBuilder.() -> Unit): Int =
+            (transport.stream(endpoint, configure).first() as HttpStreamPart.Head).value.status.value
+
+        suspend fun rpc(
+            rpcMethod: String,
+            params: JsonObject?,
+            maxBytes: Int = maxResponseBytes,
+        ): JsonObject {
             val id = JsonPrimitive(++sequence)
             val message = buildJsonObject {
                 put("jsonrpc", "2.0")
@@ -149,7 +194,11 @@ class StreamableHttpMcpClient(
             val decoder = SseDecoder()
             val chunks = mutableListOf<ByteArray>()
             var isSse = false
-            val response = transport.stream(endpoint) { post(message.toString()) }.transform { part ->
+            val budget = McpSizeBudget(maxBytes, "MCP $rpcMethod response")
+            val response = transport.stream(endpoint) {
+                post(message.toString())
+                if (rpcMethod == "tools/call") retry { noRetry() }
+            }.transform { part ->
                 when (part) {
                     is HttpStreamPart.Head -> {
                         val head = part.value
@@ -161,15 +210,18 @@ class StreamableHttpMcpClient(
                             else -> throw McpException("Unexpected MCP response content type")
                         }
                     }
-                    is HttpStreamPart.Chunk -> if (isSse) {
-                        decoder.decode(part.bytes) { frame ->
-                            if (frame.data.isNotBlank()) {
-                                val reply = parse(frame.data)
-                                if (reply["id"] == id || reply["error"] != null && reply["id"] == JsonNull) emit(reply)
+                    is HttpStreamPart.Chunk -> {
+                        budget.spend(part.bytes.size)
+                        if (isSse) {
+                            decoder.decode(part.bytes) { frame ->
+                                if (frame.data.isNotBlank()) {
+                                    val reply = parse(frame.data)
+                                    if (reply["id"] == id || reply["error"] != null && reply["id"] == JsonNull) emit(reply)
+                                }
                             }
+                        } else {
+                            chunks += part.bytes
                         }
-                    } else {
-                        chunks += part.bytes
                     }
                 }
             }.firstOrNull() ?: run {
@@ -183,7 +235,7 @@ class StreamableHttpMcpClient(
                 parse(body.decodeToString())
             }
             if (response.string("jsonrpc") != "2.0") throw McpException("Invalid MCP JSON-RPC version")
-            response["error"]?.let { throw McpException("MCP $rpcMethod failed: $it") }
+            response["error"]?.let { throw McpException("MCP $rpcMethod returned a JSON-RPC error") }
             if (response["id"] != id) throw McpException("Mismatched MCP response id")
             return response["result"] as? JsonObject ?: throw McpException("Invalid MCP $rpcMethod result")
         }
@@ -205,9 +257,23 @@ class StreamableHttpMcpClient(
 
     private fun parse(body: String): JsonObject = try {
         Json.parseToJsonElement(body) as? JsonObject ?: throw McpException("MCP response must be a JSON object")
-    } catch (cause: SerializationException) {
-        throw McpException("Invalid MCP JSON", cause)
+    } catch (_: SerializationException) {
+        throw McpException("Invalid MCP JSON")
     }
+
+    private fun JsonObject.toMcpObject(): AiValue.Object =
+        try {
+            toAiObject(maxDepth = 64)
+        } catch (_: IllegalArgumentException) {
+            throw McpException("Invalid nested MCP JSON data")
+        }
+
+    private fun Throwable.toPublicMcpFailure(message: String): Throwable =
+        when (this) {
+            is McpException, is CancellationException -> this
+            is Exception -> McpException(message)
+            else -> this
+        }
 
     private fun JsonObject.string(name: String): String? =
         (get(name) as? JsonPrimitive)?.takeIf { it.isString }?.content

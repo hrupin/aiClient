@@ -45,16 +45,19 @@ internal class JsonStructuredOutput(format: JsonResponseFormat) {
     }
 }
 
-internal fun JsonObject.toAiObject(): AiValue.Object =
-    AiValue.Object(mapValues { (_, value) -> value.toAiValue() })
+internal fun JsonObject.toAiObject(maxDepth: Int = Int.MAX_VALUE): AiValue.Object =
+    toAiValue(maxDepth) as AiValue.Object
 
-private fun JsonElement.toAiValue(): AiValue = when (this) {
-    is JsonObject -> toAiObject()
-    is JsonArray -> AiValue.Array(map { it.toAiValue() })
-    JsonNull -> AiValue.Null
-    is JsonPrimitive -> when {
-        isString -> AiValue.Text(content)
-        else -> booleanOrNull?.let(AiValue::Boolean) ?: AiValue.Number(content)
+private fun JsonElement.toAiValue(maxDepth: Int): AiValue {
+    require(maxDepth >= 0) { "JSON exceeds the nesting limit" }
+    return when (this) {
+        is JsonObject -> AiValue.Object(mapValues { (_, value) -> value.toAiValue(maxDepth - 1) })
+        is JsonArray -> AiValue.Array(map { it.toAiValue(maxDepth - 1) })
+        JsonNull -> AiValue.Null
+        is JsonPrimitive -> when {
+            isString -> AiValue.Text(content)
+            else -> booleanOrNull?.let(AiValue::Boolean) ?: AiValue.Number(content)
+        }
     }
 }
 

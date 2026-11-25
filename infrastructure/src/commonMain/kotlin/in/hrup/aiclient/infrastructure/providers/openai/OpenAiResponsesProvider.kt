@@ -1,6 +1,9 @@
 package `in`.hrup.aiclient.infrastructure.providers.openai
 
 import `in`.hrup.aiclient.infrastructure.http.HttpTransport
+import `in`.hrup.aiclient.infrastructure.providers.text.ResponsesToolCalling
+import `in`.hrup.aiclient.infrastructure.providers.text.ResponsesToolDialect
+import `in`.hrup.aiclient.infrastructure.providers.text.hasToolConversation
 import `in`.hrup.aiclient.infrastructure.http.sse.SseResponseException
 import `in`.hrup.aiclient.infrastructure.http.sse.sse
 import `in`.hrup.aiclient.infrastructure.structured.JsonStructuredOutput
@@ -8,12 +11,16 @@ import `in`.hrup.aiclient.infrastructure.providers.text.responsesContent
 import `in`.hrup.aiclient.model.conversation.AiContentPart
 import `in`.hrup.aiclient.model.conversation.AiMessage
 import `in`.hrup.aiclient.model.conversation.AiRole
+import `in`.hrup.aiclient.model.generation.AiModel
 import `in`.hrup.aiclient.model.generation.AiRequest
 import `in`.hrup.aiclient.model.generation.AiResponse
 import `in`.hrup.aiclient.model.generation.AiStreamEvent
 import `in`.hrup.aiclient.model.generation.AiUsage
 import `in`.hrup.aiclient.model.generation.StructuredOutputException
+import `in`.hrup.aiclient.provider.AiToolCapableProvider
+import `in`.hrup.aiclient.provider.AiToolCapabilities
 import `in`.hrup.aiclient.provider.StreamingAiProvider
+import `in`.hrup.aiclient.infrastructure.providers.text.TextProviderHttp
 import io.ktor.client.request.HttpRequestBuilder
 import io.ktor.client.request.accept
 import io.ktor.client.request.bearerAuth
@@ -22,6 +29,7 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpMethod
 import io.ktor.http.contentType
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.transformWhile
 import kotlinx.serialization.SerializationException
@@ -39,14 +47,31 @@ class OpenAiResponsesProvider(
     private val transport: HttpTransport,
     private val apiKey: String,
     private val endpoint: String = "https://api.openai.com/v1/responses",
-) : StreamingAiProvider {
+) : StreamingAiProvider, AiToolCapableProvider {
+    override fun toolCapabilities(model: AiModel): AiToolCapabilities {
+        val native = model.id.startsWith("gpt-6") || model.id.startsWith("gpt-5") ||
+            model.id.startsWith("gpt-4.1") || model.id.startsWith("gpt-4o")
+        return AiToolCapabilities(
+            structuredOutput = true,
+            nativeToolCalling = native,
+            streamingToolCalling = native,
+            toolsWithStructuredOutput = native,
+        )
+    }
+
     private val json = Json { ignoreUnknownKeys = true }
 
     init {
         require(apiKey.isNotBlank()) { "OpenAI API key must not be blank" }
     }
 
+    override fun openToolSession(maxContextBytes: Int): StreamingAiProvider = toolAdapter(maxContextBytes)
+
+    private fun toolAdapter(maxContextBytes: Int? = null) =
+        ResponsesToolCalling(TextProviderHttp("OpenAI", transport, endpoint, apiKey), ResponsesToolDialect.OPENAI, maxContextBytes)
+
     override suspend fun generate(request: AiRequest): AiResponse {
+        if (request.hasToolConversation()) return toolAdapter().generate(request)
         val structured = request.responseFormat?.let(::JsonStructuredOutput)
         val payload = request.toResponsesRequest(structured)
         val response = transport.execute(endpoint) {
@@ -74,6 +99,10 @@ class OpenAiResponsesProvider(
     }
 
     override fun stream(request: AiRequest): Flow<AiStreamEvent> = flow {
+        if (request.hasToolConversation()) {
+            emitAll(toolAdapter().stream(request))
+            return@flow
+        }
         val structured = request.responseFormat?.let(::JsonStructuredOutput)
         val payload = request.toResponsesRequest(structured).copy(stream = true)
         val indices = mutableMapOf<Int, Int>()

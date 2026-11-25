@@ -131,7 +131,7 @@ The current adapters expect an empty `AiRequest.tools` list. Use the
 | `AiResponse.request` | The JSON body sent to the provider for the final generation through `AiClient`. |
 | `AiResponse.response` | The provider's response body. Streamed responses retain the SSE body received through completion. |
 | `AiResponse.provider`, `AiResponse.model` | Provider ID and requested model ID for calls through `AiClient`. |
-| `AiResponse.tokensSent`, `AiResponse.tokensReceived` | Reported input and output token counts for final generation. Missing counts default to zero here and remain null in `usage`. |
+| `AiResponse.tokensSent`, `AiResponse.tokensReceived` | Reported input and output token counts across all provider turns. Missing counts default to zero here and remain null in `usage`. |
 | `AiResponse.output` | Provider output mapped to conversation items. Text is in the `AiContentPart.Text` parts of assistant messages. |
 | `AiResponse.usage` | Provider-reported counts when available. The usage object and its individual counters may be null. |
 | `AiResponse.structuredOutput` | The validated JSON object as an `AiValue.Object` when a response format was requested. |
@@ -152,11 +152,11 @@ map them into `output` or `usage`. For streaming, it retains the received SSE
 body through completion, including the event framing. Use `content` for the
 assembled assistant result and `structuredOutput` for a typed JSON object.
 
-For Local MCP, the final generation body includes the tool result when a
-tool ran. The model's separate tool-selection exchange, MCP server traffic,
-and HTTP headers are outside the capture fields. Token counters refer to the
-final generation. Inspect `usage` to distinguish a reported zero from an
-absent counter.
+For Local MCP, the final generation body includes the tool results when
+tools ran. The capture fields contain the final provider exchange. Token
+counters sum the usage reported for all provider turns in that generation,
+including tool selection and any separate structured finalization. Inspect
+`usage` to distinguish a reported zero from an absent counter.
 
 An errored or cancelled stream has no successful `Completed` response to log
 through this API. The capture retains the response body in memory, including
@@ -208,26 +208,40 @@ val response = ai.generate(
 )
 ```
 
-Both server IDs in this example must exist in `AiClientConfig.mcpServers`.
-A requested name can only become available when the server lists it.
-Use distinct tool names across selected servers.
+Both server IDs must exist in `AiClientConfig.mcpServers`. Discovery fails if a
+server omits a requested tool. Tools that share a name across servers receive
+distinct model-visible aliases for the conversation. Each call is routed to
+the original server and checked against its allowlist.
 
-1. aiClient resolves the provider and checks its key.
-2. The MCP client discovers tools with `tools/list` and keeps only the
-   names selected for this request.
-3. If any tools are available, a structured model request returns a
-   `calls` array. Each call has a tool name and a JSON-encoded arguments
-   string. An empty array skips tool execution.
-4. aiClient checks every name and validates each call's arguments against
-   its tool's input schema before invoking any tools. It then executes the
-   calls in array order.
-5. The selected provider generates the final answer with all tool results
-   as context. The caller's response schema applies to this final answer.
+`AiClientConfig(mcpToolOptions = McpToolOptions(...))` configures strategy and
+limits. The options are also accepted by the direct model-selected MCP
+extensions. `McpToolOptions` and `McpToolStrategy` are available from the MCP
+package.
 
-All four combinations of buffered or streamed output, with or without a
-response schema, use this same MCP flow. The final stream begins after
-discovery, tool selection, and tool execution. The application should derive
-each request's allowed tools from its own authorization rules.
+| Strategy | Behavior |
+| --- | --- |
+| `AUTO` | Uses native calling when the adapter supports it for the model and generation mode. Otherwise uses Structured Output for tool selection. |
+| `NATIVE_TOOL_CALLING` | Sends tools in the provider's function declarations. Each model turn can request a batch of calls or produce the final answer. |
+| `ITERATIVE_JSON` | Requests the next batch using the library's Structured Output support. An empty batch starts final generation with the caller's response format. |
+
+Every round receives the complete allowed catalog and previous tool results.
+Calls in a batch run in model order after every call is validated. Dependent
+calls use subsequent rounds. Providers that need separate structured
+finalization get a final request with the caller's schema after tool use.
+
+The defaults allow eight batches and 32 calls. The request timeout is 120
+seconds per provider turn or MCP operation. The default tool response limit
+is 256 KiB, including the MCP body. The default context budget is 2 MiB.
+Reaching a limit or receiving `isError` fails the generation. A timed-out
+tool call is attempted once. Successful models may explicitly request the
+same tool again with a new call ID.
+
+Streaming exposes final text and one terminal `Completed` event. Native
+rounds that could request tools are buffered until the library can identify
+the final answer. The final request in JSON mode or separate structured
+finalization streams as it arrives. Each collection starts a new generation
+and can execute tools. Cancellation cancels in-flight operations and any
+server-assigned MCP session gets a bounded cleanup attempt.
 
 ### Direct MCP API
 
@@ -316,7 +330,7 @@ The application downloads the result from `imageUrl` if it needs the bytes.
 | --- | --- |
 | `MissingAiApiKeyException` | Inspect `provider` and its `apiKeySetting`. Supply the key through the application's configuration. |
 | `StructuredOutputException` | Inspect `violations` for schema validation details. Invalid JSON or an incorrect root type can produce an empty list. In an MCP request this can also refer to tool selection or arguments. |
-| `McpException` | Inspect the MCP operation and server error. Initialization must return a negotiated `protocolVersion`. A tool-level error also stops generation. |
+| `McpException` | Discovery, strategy selection, tool execution or an MCP limit failed. MCP error messages omit raw server payloads. |
 | `BflImageException` | Inspect `httpStatus` and `responseBody` for BFL submission or polling failures. |
 | Provider response exception | Inspect the HTTP status, request ID, and provider code when available. |
 | Flow fails before `Completed` | Handle the error in the collecting coroutine. The generation has no successful final result. |

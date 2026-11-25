@@ -100,7 +100,13 @@ data: [DONE]
                     val plan = JsonPrimitive(
                         """{"calls":[{"name":"summarize","arguments":"{}"},{"name":"lookup","arguments":"{\"id\":42}"}]}""",
                     )
-                    respond("""{"choices":[{"finish_reason":"stop","message":{"content":$plan}}]}""")
+                    respond("""{"choices":[{"finish_reason":"stop","message":{"content":$plan}}],"usage":{"prompt_tokens":5,"completion_tokens":3}}""")
+                } else if (providerCalls == 2) {
+                    assertTrue("result-from-summarize" in payload.toString())
+                    assertTrue("result-from-lookup" in payload.toString())
+                    assertTrue("Available tools" in payload.toString())
+                    val finished = JsonPrimitive("""{"calls":[]}""")
+                    respond("""{"choices":[{"finish_reason":"stop","message":{"content":$finished}}],"usage":{"prompt_tokens":7,"completion_tokens":1}}""")
                 } else {
                     assertEquals(listOf("summarize", "lookup"), invoked)
                     finalRequest = bytes.decodeToString()
@@ -136,9 +142,9 @@ data: [DONE]
             assertEquals(finalRequest, result.request)
             assertEquals("kimi", result.provider)
             assertEquals("override-model", result.model)
-            assertEquals(10L, result.tokensSent)
-            assertEquals(2L, result.tokensReceived)
-            assertEquals(2, providerCalls)
+            assertEquals(22L, result.tokensSent)
+            assertEquals(6L, result.tokensReceived)
+            assertEquals(3, providerCalls)
             assertEquals(
                 listOf(
                     "initialize", "notifications/initialized", "tools/list",

@@ -2,8 +2,7 @@ package `in`.hrup.aiclient
 
 import `in`.hrup.aiclient.infrastructure.http.HttpExchangeCapture
 import `in`.hrup.aiclient.infrastructure.http.HttpTransport
-import `in`.hrup.aiclient.infrastructure.mcp.McpAvailableTool
-import `in`.hrup.aiclient.infrastructure.mcp.StreamableHttpMcpClient
+import `in`.hrup.aiclient.infrastructure.mcp.McpToolDiscovery
 import `in`.hrup.aiclient.infrastructure.mcp.generateWithMcpTools
 import `in`.hrup.aiclient.infrastructure.mcp.streamWithMcpTools
 import `in`.hrup.aiclient.infrastructure.providers.bfl.BflImageProvider
@@ -36,7 +35,7 @@ import kotlinx.coroutines.flow.flow
  * to that request. An empty selection makes no MCP requests.
  */
 class AiClient(private val httpClient: HttpClient, private val config: AiClientConfig) {
-    private val mcpTransport = HttpTransport(httpClient)
+    private val mcpDiscovery = McpToolDiscovery(HttpTransport(httpClient), config.mcpServers, config.mcpToolOptions)
 
     suspend fun generateImage(
         prompt: String,
@@ -81,7 +80,7 @@ class AiClient(private val httpClient: HttpClient, private val config: AiClientC
     ): AiResponse {
         val capture = HttpExchangeCapture()
         val adapter = adapter(provider, HttpTransport(httpClient, capture))
-        return adapter.generateWithMcpTools(request, availableTools(mcpTools))
+        return adapter.generateWithMcpTools(request, mcpDiscovery.discover(mcpTools), config.mcpToolOptions)
             .withRequestDetails(provider, request, capture)
     }
 
@@ -103,7 +102,7 @@ class AiClient(private val httpClient: HttpClient, private val config: AiClientC
         return flow {
             val capture = HttpExchangeCapture()
             val adapter = adapter(provider, HttpTransport(httpClient, capture))
-            adapter.streamWithMcpTools(request, availableTools(selection)).collect { event ->
+            adapter.streamWithMcpTools(request, mcpDiscovery.discover(selection), config.mcpToolOptions).collect { event ->
                 emit(when (event) {
                     is AiStreamEvent.Completed -> event.copy(response = event.response.withRequestDetails(provider, request, capture))
                     else -> event
@@ -129,16 +128,6 @@ class AiClient(private val httpClient: HttpClient, private val config: AiClientC
             input = listOf(AiMessage(AiRole.USER, listOf(AiContentPart.Text(prompt)))),
             responseFormat = format,
         )
-
-    private suspend fun availableTools(selection: Map<String, Set<String>>): List<McpAvailableTool> {
-        val clients = selection.filterValues { it.isNotEmpty() }.map { (id, names) ->
-            val server = requireNotNull(config.mcpServers[id]) { "Unknown MCP server: $id" }
-            StreamableHttpMcpClient(mcpTransport, server.endpoint, names, server.headers)
-        }
-        return clients.flatMap { client ->
-            client.listTools().map { McpAvailableTool(client, it) }
-        }
-    }
 
     private fun adapter(provider: AiProviderId, transport: HttpTransport): StreamingAiProvider {
         val settings = config.providers[provider]

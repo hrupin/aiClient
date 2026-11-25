@@ -19,12 +19,12 @@ Use `commonMain.dependencies` in a KMP module or the module's
 `dependencies` block in a JVM or Android application.
 
 ```kotlin
-implementation("in.hrup.aiclient:kmp:0.1.8")
+implementation("in.hrup.aiclient:kmp:0.1.9")
 ```
 
 Use a version available in Maven Central. The `kmp` artifact includes
 `core` as a transitive dependency. For domain models and contracts alone,
-use `implementation("in.hrup.aiclient:core:0.1.8")`.
+use `implementation("in.hrup.aiclient:core:0.1.9")`.
 
 ## Dependency injection
 
@@ -368,7 +368,7 @@ text or validated JSON, and use `request` and `response` for diagnostics.
 | `request` | The JSON body actually sent to the AI provider. |
 | `response` | The original provider response body, including received SSE frames through completion for streaming calls. |
 | `provider`, `model` | Provider ID and the requested model ID. |
-| `tokensSent`, `tokensReceived` | Provider-reported input and output tokens for final generation. Each count defaults to zero if absent. |
+| `tokensSent`, `tokensReceived` | Provider-reported input and output tokens across all provider turns. Each count defaults to zero if absent. |
 | `structuredOutput` | The validated `AiValue.Object` when a response schema was requested. |
 
 The example uses a logging callback so the application controls where to store
@@ -406,7 +406,7 @@ suspend fun streamAndLog(ai: AiClient, log: (String) -> Unit) {
 
 These fields capture the final provider exchange. With Local MCP, the final
 request body includes the tool result when a tool runs. HTTP headers and separate
-tool-selection and MCP exchanges are outside these fields. Provider bodies may
+intermediate model and MCP exchanges are outside these fields. Provider bodies may
 contain user and tool data, so redact sensitive content before persisting logs.
 See the [API reference](docs/api-reference.md#provider-exchange-capture) for
 details about the capture behavior.
@@ -537,17 +537,17 @@ val textEvents = ai.stream(prompt, mcpTools = catalogTools)
 val jsonEvents = ai.stream(prompt, responseFormat = modelFormat, mcpTools = catalogTools)
 ```
 
-aiClient uses `tools/list` to discover definitions and filters them to the
-requested names. A separate structured generation lets the model select
-zero or more tool calls. The library checks all names and validates all
-arguments against the tools' input schemas before invoking any tool.
-It executes the calls in order and passes all results to the model. In
-streaming mode the final answer starts after tool execution. Both model
-requests use the selected provider and model.
+aiClient discovers the selected tools with `tools/list`. In the default
+`AUTO` strategy, it uses native Function Calling for supported models or
+iterative JSON selection through Structured Output. The model receives the
+results of each batch before it chooses the next one, so later calls can
+use earlier results. Tools with the same name on different servers get
+distinct aliases. The caller's schema still applies to the final answer.
 
-A request can use tools from several configured servers. Available tool names
-must be unique across those servers. Set the tools for each request according
-to the user's permissions and the task.
+Configure strategy, timeouts, and generation limits through
+`AiClientConfig.mcpToolOptions`. Streaming delivers the final answer and one
+`Completed` event with usage summed across the provider turns. See the
+[API reference](docs/api-reference.md#local-mcp) for details.
 
 When using an adapter directly, the `in.hrup.aiclient.infrastructure.mcp`
 package provides `StreamableHttpMcpClient`, `generateWithMcpTools()`, and
@@ -627,10 +627,11 @@ Use `-PaiModel` to select a model in an individual provider integration test.
 
 - `:core` contains domain models and contracts. It has no Ktor or
   kotlinx.serialization dependencies.
-- `:application` is reserved for application use cases and depends on `:core`.
-- `:infrastructure` contains the public client, provider adapters,
-  Ktor transport, MCP implementation, and local JSON Schema validation. It
-  depends on `:core` and is published as `kmp`.
+- `:application` contains the tool execution loop and its policies. It depends
+  on `:core` and is published as a transitive dependency of `kmp`.
+- `:infrastructure` contains the public client, provider adapters, Ktor
+  transport, MCP client, and local JSON Schema validation. It is published as
+  `kmp`.
 
 To verify all targets on Apple Silicon, use JDK 21, Android SDK 37, and Xcode.
 

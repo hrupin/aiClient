@@ -1,6 +1,9 @@
 package `in`.hrup.aiclient.infrastructure.providers.deepseek
 
 import `in`.hrup.aiclient.infrastructure.http.HttpTransport
+import `in`.hrup.aiclient.infrastructure.providers.text.ResponsesToolCalling
+import `in`.hrup.aiclient.infrastructure.providers.text.ResponsesToolDialect
+import `in`.hrup.aiclient.infrastructure.providers.text.hasToolConversation
 import `in`.hrup.aiclient.infrastructure.providers.text.ProviderResponseException
 import `in`.hrup.aiclient.infrastructure.providers.text.TextProviderHttp
 import `in`.hrup.aiclient.infrastructure.providers.text.streamResponses
@@ -9,11 +12,14 @@ import `in`.hrup.aiclient.infrastructure.structured.JsonStructuredOutput
 import `in`.hrup.aiclient.model.conversation.AiContentPart
 import `in`.hrup.aiclient.model.conversation.AiMessage
 import `in`.hrup.aiclient.model.conversation.AiRole
+import `in`.hrup.aiclient.model.generation.AiModel
 import `in`.hrup.aiclient.model.generation.AiRequest
 import `in`.hrup.aiclient.model.generation.AiResponse
 import `in`.hrup.aiclient.model.generation.AiStreamEvent
 import `in`.hrup.aiclient.model.generation.AiUsage
 import `in`.hrup.aiclient.model.generation.StructuredOutputException
+import `in`.hrup.aiclient.provider.AiToolCapableProvider
+import `in`.hrup.aiclient.provider.AiToolCapabilities
 import `in`.hrup.aiclient.provider.StreamingAiProvider
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
@@ -39,12 +45,23 @@ class DeepSeekResponsesProvider(
     private val transport: HttpTransport,
     private val apiKey: String,
     private val endpoint: String = "https://api.deepseek.com/responses",
-) : StreamingAiProvider {
+) : StreamingAiProvider, AiToolCapableProvider {
+    override fun toolCapabilities(model: AiModel): AiToolCapabilities {
+        val supported = model.id == "deepseek-flash" || model.id == "deepseek-v4-pro"
+        return AiToolCapabilities(structuredOutput = supported, nativeToolCalling = supported, streamingToolCalling = supported)
+    }
+
     private val streamingHttp = TextProviderHttp("DeepSeek", transport, endpoint, apiKey)
     private val json get() = streamingHttp.json
     private val metadataTypes = setOf("reasoning")
 
+    override fun openToolSession(maxContextBytes: Int): StreamingAiProvider = toolAdapter(maxContextBytes)
+
+    private fun toolAdapter(maxContextBytes: Int? = null) =
+        ResponsesToolCalling(streamingHttp, ResponsesToolDialect.DEEPSEEK, maxContextBytes)
+
     override suspend fun generate(request: AiRequest): AiResponse {
+        if (request.hasToolConversation()) return toolAdapter().generate(request)
         val structured = request.responseFormat?.let(::JsonStructuredOutput)
         val payload = request.toPayload(structured)
         val response = transport.execute(endpoint) {
@@ -112,6 +129,10 @@ class DeepSeekResponsesProvider(
     }
 
     override fun stream(request: AiRequest): Flow<AiStreamEvent> = flow {
+        if (request.hasToolConversation()) {
+            emitAll(toolAdapter().stream(request))
+            return@flow
+        }
         val structured = request.responseFormat?.let(::JsonStructuredOutput)
         val payload = request.toPayload(structured).copy(stream = true)
         emitAll(streamingHttp.streamResponses(json.encodeToString(payload), structured, metadataTypes).catch { cause ->

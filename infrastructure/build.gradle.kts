@@ -83,6 +83,7 @@ kotlin {
     sourceSets {
         commonMain.dependencies {
             api(project(":core"))
+            api(project(":application"))
             api(libs.coroutines.core)
             api(libs.ktor.client.core)
             implementation(libs.serialization.json)

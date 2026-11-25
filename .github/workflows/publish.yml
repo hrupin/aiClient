@@ -45,6 +45,7 @@ jobs:
           : "${CENTRAL_LICENSE_URL:?Set the CENTRAL_LICENSE_URL repository variable}"
           ./gradlew --no-configuration-cache jvmTest \
             :core:publishAllPublicationsToCentralStagingRepository \
+            :application:publishAllPublicationsToCentralStagingRepository \
             :infrastructure:publishAllPublicationsToCentralStagingRepository
           release_version=$(sed -n 's/^aiClientVersion=//p' gradle.properties)
           python3 scripts/build-central-bundle.py build/central-staging "$release_version" build/central-bundle.zip

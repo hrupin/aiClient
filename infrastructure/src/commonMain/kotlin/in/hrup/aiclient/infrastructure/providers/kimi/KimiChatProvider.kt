@@ -4,9 +4,12 @@ import `in`.hrup.aiclient.infrastructure.http.HttpTransport
 import `in`.hrup.aiclient.infrastructure.http.inlineRemoteImages
 import `in`.hrup.aiclient.infrastructure.providers.text.ChatCompletionsText
 import `in`.hrup.aiclient.infrastructure.providers.text.TextProviderHttp
+import `in`.hrup.aiclient.model.generation.AiModel
 import `in`.hrup.aiclient.model.generation.AiRequest
 import `in`.hrup.aiclient.model.generation.AiResponse
 import `in`.hrup.aiclient.model.generation.AiStreamEvent
+import `in`.hrup.aiclient.provider.AiToolCapableProvider
+import `in`.hrup.aiclient.provider.AiToolCapabilities
 import `in`.hrup.aiclient.provider.StreamingAiProvider
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emitAll
@@ -20,11 +23,17 @@ class KimiChatProvider(
     transport: HttpTransport,
     apiKey: String,
     endpoint: String = "https://api.moonshot.ai/v1/chat/completions",
-) : StreamingAiProvider {
+) : StreamingAiProvider, AiToolCapableProvider {
+    override fun toolCapabilities(model: AiModel): AiToolCapabilities {
+        val native = model.id == "kimi-k3" || model.id == "kimi-k3.1-pro" || model.id == "kimi-k3.1-pro-highspeed"
+        return AiToolCapabilities(structuredOutput = true, nativeToolCalling = native, streamingToolCalling = native)
+    }
+
     private val chat = ChatCompletionsText(
         TextProviderHttp("Kimi", transport, endpoint, apiKey),
         nativeSchemaModels = setOf("kimi-k3"),
         allowsRemoteImageUrls = false,
+        includeToolResultName = true,
     )
 
     private val imageTransport = transport.withoutExchangeCapture()
@@ -37,6 +46,18 @@ class KimiChatProvider(
 
     override fun stream(request: AiRequest): Flow<AiStreamEvent> = flow {
         emitAll(chat.stream(request.inlineRemoteImages(imageTransport, imageMediaTypes), normalizer(request)))
+    }
+
+    override fun openToolSession(maxContextBytes: Int): StreamingAiProvider {
+        val session = chat.toolSession(maxContextBytes)
+        return object : StreamingAiProvider {
+            override suspend fun generate(request: AiRequest): AiResponse =
+                session.generate(request.inlineRemoteImages(imageTransport, imageMediaTypes), normalizer(request))
+
+            override fun stream(request: AiRequest): Flow<AiStreamEvent> = flow {
+                emitAll(session.stream(request.inlineRemoteImages(imageTransport, imageMediaTypes), normalizer(request)))
+            }
+        }
     }
 
     private fun normalizer(request: AiRequest): ((String) -> String)? =

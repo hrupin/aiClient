@@ -1,5 +1,6 @@
 package `in`.hrup.aiclient
 
+import `in`.hrup.aiclient.infrastructure.mcp.McpToolOptions
 import kotlinx.serialization.Serializable
 
 @Serializable
@@ -34,6 +35,17 @@ class AiClientConfig(
 ) {
     val providers = providers.toMap()
     val mcpServers = mcpServers.toMap()
+    var mcpToolOptions: McpToolOptions = McpToolOptions()
+        private set
+
+    constructor(
+        defaultProvider: AiProviderId = AiProviderId.OPENAI,
+        providers: Map<AiProviderId, AiProviderConfig> = emptyMap(),
+        mcpServers: Map<String, McpServerConfig> = emptyMap(),
+        mcpToolOptions: McpToolOptions,
+    ) : this(defaultProvider, providers, mcpServers) {
+        this.mcpToolOptions = mcpToolOptions
+    }
 }
 
 class MissingAiApiKeyException(val provider: AiProviderId) :

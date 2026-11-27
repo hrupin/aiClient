@@ -9,6 +9,7 @@ import `in`.hrup.aiclient.model.conversation.AiMessage
 import `in`.hrup.aiclient.model.conversation.AiRole
 import `in`.hrup.aiclient.model.conversation.AiToolCall
 import `in`.hrup.aiclient.model.conversation.AiToolResult
+import `in`.hrup.aiclient.model.generation.AiModel
 import `in`.hrup.aiclient.model.generation.AiRequest
 import `in`.hrup.aiclient.model.generation.AiResponse
 import `in`.hrup.aiclient.model.generation.AiStreamEvent
@@ -48,6 +49,7 @@ internal class ResponsesToolCalling(
     private val http: TextProviderHttp,
     private val dialect: ResponsesToolDialect,
     private val maxContextBytes: Int? = null,
+    private val builtInTools: (AiModel) -> List<JsonObject> = { emptyList() },
 ) : StreamingAiProvider {
     private val history = mutableMapOf<Int, Replay>()
     private var retainedWireBytes = 0
@@ -131,8 +133,10 @@ internal class ResponsesToolCalling(
             if (streaming) put("stream", true)
             if (dialect.storeParameter) put("store", false)
             if (dialect.encryptedReasoning) put("include", buildJsonArray { add(JsonPrimitive("reasoning.encrypted_content")) })
-            if (request.tools.isNotEmpty()) {
+            val hostedTools = builtInTools(request.model)
+            if (hostedTools.isNotEmpty() || request.tools.isNotEmpty()) {
                 put("tools", buildJsonArray {
+                    hostedTools.forEach { add(it) }
                     request.tools.forEach { tool ->
                         add(buildJsonObject {
                             put("type", "function")
@@ -193,7 +197,10 @@ internal class ResponsesToolCalling(
             val message = output.singleOrNull() as? AiMessage ?: fail("Expected one structured output message")
             JsonStructuredOutput(it).validate(message.content.filterIsInstance<AiContentPart.Text>().joinToString("") { part -> part.text })
         }
-        return AiResponse(output, response.usage?.toAiUsage(), structured)
+        val sources = if (dialect == ResponsesToolDialect.PERPLEXITY) {
+            response.output.filter { it.text("type") == "search_results" }.flatMap { it["results"].toSearchSources() }
+        } else emptyList()
+        return AiResponse(output, response.usage?.toAiUsage(), structured, searchSources = sources)
     }
 
     private fun TextHttpResponse.toItem(item: JsonObject): AiConversationItem? = when (item.text("type")) {

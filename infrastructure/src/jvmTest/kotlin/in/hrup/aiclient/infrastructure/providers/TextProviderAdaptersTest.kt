@@ -13,6 +13,7 @@ import `in`.hrup.aiclient.model.conversation.AiMessage
 import `in`.hrup.aiclient.model.conversation.AiRole
 import `in`.hrup.aiclient.model.generation.AiModel
 import `in`.hrup.aiclient.model.generation.AiRequest
+import `in`.hrup.aiclient.model.generation.AiSearchSource
 import `in`.hrup.aiclient.model.generation.AiStreamEvent
 import `in`.hrup.aiclient.model.generation.AiUsage
 import `in`.hrup.aiclient.model.generation.StructuredOutputException
@@ -65,12 +66,42 @@ class TextProviderAdaptersTest {
     }
 
     @Test
+    fun perplexitySonarRequestsWebSearchAndReturnsTheAnswer() = runBlocking {
+        HttpClient(MockEngine { call ->
+            assertRequest(
+                call,
+                "https://api.perplexity.ai/v1/agent",
+                """{"model":"perplexity/sonar","input":$messages,"tools":[{"type":"web_search"}]}""",
+            )
+            respond(
+                """{"status":"completed","output":[
+                    {"type":"search_results","results":[{"id":1,"url":"https://example.com/news","title":"News","snippet":"An excerpt."}]},
+                    {"type":"search_results","results":[{"id":2,"url":"https://example.com/about"}]},
+                    {"type":"message","content":[{"type":"output_text","text":"Answer [1]"}]}
+                ]}""",
+            )
+        }).use { client ->
+            val provider = PerplexityAgentProvider(HttpTransport(client), "test-key")
+            val result = provider.generate(request("perplexity/sonar"))
+            assertEquals("Answer [1]", result.content)
+            assertEquals(1, result.output.size)
+            assertEquals(
+                listOf(
+                    AiSearchSource(1, "https://example.com/news", "News", "An excerpt."),
+                    AiSearchSource(2, "https://example.com/about"),
+                ),
+                result.searchSources,
+            )
+        }
+    }
+
+    @Test
     fun perplexityUsesAgentResponseFormatAndSkipsSearchMetadata() = runBlocking {
         HttpClient(MockEngine { call ->
             assertRequest(
                 call,
                 "https://api.perplexity.ai/v1/agent",
-                """{"model":"perplexity/sonar","input":$messages,"response_format":{"type":"json_schema","json_schema":{"name":"result","schema":$schema}}}""",
+                """{"model":"perplexity/sonar","input":$messages,"tools":[{"type":"web_search"}],"response_format":{"type":"json_schema","json_schema":{"name":"result","schema":$schema}}}""",
             )
             respond(responsesOutput("""{"value":42}""", "search_results"))
         }).use { client ->

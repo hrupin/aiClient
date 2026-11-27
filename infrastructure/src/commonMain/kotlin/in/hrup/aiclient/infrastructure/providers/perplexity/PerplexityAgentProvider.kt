@@ -24,6 +24,8 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 
 class PerplexityAgentProvider(
     transport: HttpTransport,
@@ -41,7 +43,7 @@ class PerplexityAgentProvider(
     override fun openToolSession(maxContextBytes: Int): StreamingAiProvider = toolAdapter(maxContextBytes)
 
     private fun toolAdapter(maxContextBytes: Int? = null) =
-        ResponsesToolCalling(http, ResponsesToolDialect.PERPLEXITY, maxContextBytes)
+        ResponsesToolCalling(http, ResponsesToolDialect.PERPLEXITY, maxContextBytes, ::builtInTools)
 
     override suspend fun generate(request: AiRequest): AiResponse {
         if (request.hasToolConversation()) return toolAdapter().generate(request)
@@ -64,6 +66,7 @@ class PerplexityAgentProvider(
         return PerplexityRequest(
             model = model.id,
             input = input,
+            tools = builtInTools(model),
             responseFormat = structured?.let {
                 PerplexityFormat("json_schema", PerplexitySchema(requireNotNull(responseFormat).name, it.definition))
             },
@@ -75,6 +78,7 @@ class PerplexityAgentProvider(
 private data class PerplexityRequest(
     val model: String,
     val input: List<TextMessage>,
+    val tools: List<JsonObject> = emptyList(),
     @SerialName("response_format") val responseFormat: PerplexityFormat? = null,
     val stream: Boolean = false,
 )
@@ -87,3 +91,8 @@ private data class PerplexityFormat(
 
 @Serializable
 private data class PerplexitySchema(val name: String, val schema: JsonObject)
+
+private val webSearch = listOf(buildJsonObject { put("type", "web_search") })
+
+private fun builtInTools(model: AiModel): List<JsonObject> =
+    if (model.id == "perplexity/sonar") webSearch else emptyList()

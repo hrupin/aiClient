@@ -13,6 +13,7 @@ import `in`.hrup.aiclient.model.conversation.AiRole
 import `in`.hrup.aiclient.model.generation.AiModel
 import `in`.hrup.aiclient.model.generation.AiRequest
 import `in`.hrup.aiclient.model.generation.AiResponse
+import `in`.hrup.aiclient.model.generation.AiSearchSource
 import `in`.hrup.aiclient.model.generation.AiStreamEvent
 import `in`.hrup.aiclient.model.generation.AiUsage
 import `in`.hrup.aiclient.provider.StreamingAiProvider
@@ -55,17 +56,24 @@ class ProviderStreamingTest {
                 val json = Json.parseToJsonElement(payload).jsonObject
                 assertEquals(JsonPrimitive(true), json["stream"])
                 assertEquals(JsonPrimitive(case.model), json["model"])
+                if (case.model == "perplexity/sonar") {
+                    assertEquals("https://api.perplexity.ai/v1/agent", call.url.toString())
+                    assertEquals(Json.parseToJsonElement("""[{"type":"web_search"}]"""), json["tools"])
+                }
                 respond(channel, headers = headers)
             }).use { client ->
                 val events = withTimeout(5_000) {
                     case.create(HttpTransport(client)).stream(request(case.model)).toList()
                 }
+                val sources = if (case.model == "perplexity/sonar") {
+                    listOf(AiSearchSource(3, "https://example.com/report", "Report", "Report excerpt."))
+                } else emptyList()
                 assertEquals(
                     listOf(
                         AiStreamEvent.TextDelta(0, 0, "Привет"),
                         AiStreamEvent.TextDelta(0, 0, "!"),
                         AiStreamEvent.OutputItemCompleted(0, assistant),
-                        AiStreamEvent.Completed(AiResponse(listOf(assistant), AiUsage(5, 3, 8))),
+                        AiStreamEvent.Completed(AiResponse(listOf(assistant), AiUsage(5, 3, 8), searchSources = sources)),
                     ),
                     events,
                     case.model,
@@ -136,13 +144,17 @@ class ProviderStreamingTest {
 
     private fun responsesEvents(metadata: String): String {
         val message = """{"type":"message","content":[{"type":"output_text","text":"Привет!"}]}"""
+        val metadataItem = if (metadata == "search_results") {
+            """{"type":"search_results","results":[{"id":3,"url":"https://example.com/report","title":"Report","snippet":"Report excerpt."}]}"""
+        } else """{"type":"$metadata"}"""
         return sse(
             """{"type":"response.output_item.added","output_index":0,"item":{"type":"$metadata"}}""",
+            """{"type":"response.output_item.done","output_index":0,"item":$metadataItem}""",
             """{"type":"response.output_item.added","output_index":1,"item":{"type":"message"}}""",
             responsesDelta,
             """{"type":"response.output_text.delta","output_index":1,"content_index":0,"delta":"!"}""",
             """{"type":"response.output_item.done","output_index":1,"item":$message}""",
-            """{"type":"response.completed","response":{"status":"completed","output":[{"type":"$metadata"},$message],"usage":{"input_tokens":5,"output_tokens":3,"total_tokens":8}}}""",
+            """{"type":"response.completed","response":{"status":"completed","output":[$metadataItem,$message],"usage":{"input_tokens":5,"output_tokens":3,"total_tokens":8}}}""",
         )
     }
 

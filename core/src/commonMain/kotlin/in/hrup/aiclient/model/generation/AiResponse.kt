@@ -16,6 +16,8 @@ data class AiResponse(
     val request: String = "",
     /** HTTP response body received from the provider by AiClient, including SSE for streams. */
     val response: String = "",
+    /** Search sources returned by the provider for this response, in provider order. */
+    val searchSources: List<AiSearchSource> = emptyList(),
 ) {
     val content: String
         get() = output.filterIsInstance<AiMessage>()
@@ -32,4 +34,12 @@ data class AiUsage(
     val inputTokens: Long? = null,
     val outputTokens: Long? = null,
     val totalTokens: Long? = null,
+)
+
+/** The ID is the number used by the provider to reference this source in the answer. */
+data class AiSearchSource(
+    val id: Int,
+    val url: String,
+    val title: String? = null,
+    val snippet: String? = null,
 )

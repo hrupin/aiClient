@@ -89,7 +89,8 @@ private fun TextHttpResponse.toResponsesResult(
     }
 
     val messages = decoded.output.mapNotNull { outputText(it, metadataTypes) }
-    return toAiResponse(messages, decoded.usage?.toAiUsage(), structured)
+    val sources = decoded.output.filter { it.type == "search_results" }.flatMap { it.results.toSearchSources() }
+    return toAiResponse(messages, decoded.usage?.toAiUsage(), structured).copy(searchSources = sources)
 }
 
 private fun TextHttpResponse.outputText(item: ResponsesItem, metadataTypes: Set<String>): List<String>? =
@@ -127,7 +128,11 @@ private data class ResponsesEnvelope(
 }
 
 @Serializable
-private data class ResponsesItem(val type: String, val content: List<ResponsesPart>? = null)
+private data class ResponsesItem(
+    val type: String,
+    val content: List<ResponsesPart>? = null,
+    val results: JsonElement? = null,
+)
 
 @Serializable
 private data class ResponsesPart(val type: String, val text: String? = null, val refusal: String? = null)

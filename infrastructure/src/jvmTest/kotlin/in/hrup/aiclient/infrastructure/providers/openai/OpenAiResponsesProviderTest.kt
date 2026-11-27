@@ -97,6 +97,24 @@ class OpenAiResponsesProviderTest {
     }
 
     @Test
+    fun streamingHttpErrorIncludesTheOpenAiMessage() = runBlocking {
+        HttpClient(MockEngine {
+            respond(
+                """{"error":{"message":"Invalid response schema","code":"invalid_json_schema"}}""",
+                HttpStatusCode.BadRequest,
+                headersOf(HttpHeaders.ContentType to listOf("application/json"), "x-request-id" to listOf("req-stream")),
+            )
+        }).use { client ->
+            val provider = OpenAiResponsesProvider(HttpTransport(client), "test-key")
+            val error = assertFailsWith<OpenAiResponsesException> { provider.stream(request).toList() }
+            assertEquals(400, error.httpStatus)
+            assertEquals("req-stream", error.requestId)
+            assertEquals("invalid_json_schema", error.code)
+            assertEquals("Invalid response schema", error.message)
+        }
+    }
+
+    @Test
     fun sendsTextAndImagesInOrder() = runBlocking {
         HttpClient(MockEngine { call ->
             val body = assertIs<OutgoingContent.ByteArrayContent>(call.body).bytes().decodeToString()

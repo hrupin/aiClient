@@ -81,8 +81,17 @@ internal class TextProviderHttp(
                 cause.head.status.value,
                 cause.head.headers["x-request-id"] ?: cause.head.headers["request-id"]
                     ?: cause.head.headers["x-ds-request-id"],
-                "",
-            ).fail(cause.message ?: "Invalid $provider SSE response", cause = cause)
+                cause.errorBody.orEmpty(),
+            ).let { response ->
+                val error = cause.errorBody?.let {
+                    try {
+                        json.parseToJsonElement(it) as? JsonObject
+                    } catch (_: SerializationException) {
+                        null
+                    }
+                }
+                response.failFrom(error, cause.message ?: "Invalid $provider SSE response", cause = cause)
+            }
         }
 
     fun streamResponse(body: String = "") = TextHttpResponse(provider, 200, null, body)
@@ -104,14 +113,19 @@ internal data class TextHttpResponse(
     fun fail(message: String, code: String? = null, cause: Throwable? = null): Nothing =
         throw ProviderResponseException(provider, status, requestId, code, message, cause)
 
-    fun failFrom(envelope: JsonObject?, fallback: String, fallbackCode: String? = null): Nothing {
+    fun failFrom(
+        envelope: JsonObject?,
+        fallback: String,
+        fallbackCode: String? = null,
+        cause: Throwable? = null,
+    ): Nothing {
         val error = envelope?.get("error")
         val fields = error as? JsonObject
         val message = fields?.get("message").asText()
             ?: error.asText()
             ?: envelope?.get("message").asText()
         val code = fields?.get("code").asText() ?: envelope?.get("code").asText()
-        fail(message ?: fallback, code ?: fallbackCode)
+        fail(message ?: fallback, code ?: fallbackCode, cause)
     }
 
     inline fun <reified T> decode(json: Json): T = try {

@@ -21,6 +21,8 @@ import `in`.hrup.aiclient.model.generation.AiStreamEvent
 import `in`.hrup.aiclient.model.generation.JsonResponseFormat
 import `in`.hrup.aiclient.model.value.AiValue
 import `in`.hrup.aiclient.provider.StreamingAiProvider
+import io.ktor.client.request.prepareGet
+import io.ktor.http.Url
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -90,6 +92,56 @@ class KimiLiveIntegrationTest {
 }
 
 class PerplexityLiveIntegrationTest {
+    @Test
+    fun findsThreeLatestUsNewsStories() = runBlocking {
+        val key = checkNotNull(liveSetting(System.getenv("PERPLEXITY_API_KEY"), readLiveEnv()["PERPLEXITY_API_KEY"])) {
+            "Set PERPLEXITY_API_KEY in .env or in the environment before running this test"
+        }
+        val prompt = "Найди через веб-поиск три разные новости о США за последние 48 часов. " +
+            "Категории: politics (политика или суд), economy (экономика или бизнес), society (общество, транспорт или погода). Выбери по одному событию из каждой категории. " +
+            "Две публикации об одном событии считаются одной новостью. Ответь на русском. " +
+            "Для каждой новости укажи тему, заголовок, дату публикации, краткое содержание " +
+            "и точный URL из результатов поиска. Используй только прямые страницы публикаций на " +
+            "www.npr.org, www.pbs.org, www.cbsnews.com или www.cnbc.com. Исключи AP, Reuters, редиректы и рассылки. " +
+            "Подойдут статьи и выпуски с конкретной датой, но не тематические страницы."
+        val format = parseJsonResponseFormat("us_news", """
+            {"type":"object","properties":{"stories":{"type":"array","minItems":3,"maxItems":3,"items":{
+                "type":"object","properties":{"topic":{"type":"string","enum":["politics","economy","society"]},"headline":{"type":"string"},
+                "date":{"type":"string"},"summary":{"type":"string"},"url":{"type":"string"}},
+                "required":["topic","headline","date","summary","url"],"additionalProperties":false
+            }}},"required":["stories"],"additionalProperties":false}
+        """.trimIndent())
+        val request = AiRequest(
+            AiModel("perplexity/sonar"), listOf(AiMessage(AiRole.USER, listOf(AiContentPart.Text(prompt)))),
+            responseFormat = format,
+        )
+
+        createHttpClient().use { client ->
+            val provider = PerplexityAgentProvider(HttpTransport(client), key)
+            val response = withTimeout(90_000) { provider.generate(request) }
+            println(response.content)
+            val stories = assertIs<AiValue.Array>(assertIs<AiValue.Object>(response.structuredOutput).fields["stories"]).values
+            assertEquals(3, stories.size)
+            val sourceUrls = response.searchSources.map { it.url }.toSet()
+            val allowedHosts = setOf("www.npr.org", "www.pbs.org", "www.cbsnews.com", "www.cnbc.com")
+            val topics = mutableSetOf<String>()
+            val urls = mutableSetOf<String>()
+            for (value in stories) {
+                val story = assertIs<AiValue.Object>(value)
+                fun field(name: String) = assertIs<AiValue.Text>(story.fields[name]).value
+                val url = field("url")
+                assertTrue(topics.add(field("topic").trim().lowercase()), "Duplicate news topic")
+                assertTrue(urls.add(url), "Duplicate news URL")
+                assertTrue(url in sourceUrls, "URL missing from Perplexity search sources: $url")
+                val parsed = Url(url)
+                assertTrue(parsed.protocol.name == "https" && parsed.host in allowedHosts && parsed.port == 443)
+                val status = withTimeout(20_000) { client.prepareGet(url).execute { it.status.value } }
+                println("HTTP $status — $url")
+                assertTrue(status in 200..299, "Source did not return success: HTTP $status — $url")
+            }
+        }
+    }
+
     @Test
     fun streamsText() = runBlocking {
         generateLive("PERPLEXITY", "perplexity/sonar", streaming = true) { transport, key ->

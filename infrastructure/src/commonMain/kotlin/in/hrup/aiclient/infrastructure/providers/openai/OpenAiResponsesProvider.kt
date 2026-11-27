@@ -82,11 +82,7 @@ class OpenAiResponsesProvider(
         val requestId = response.head.headers["x-request-id"]
         val body = response.body.decodeToString()
         if (status !in 200..299) {
-            val error = try {
-                json.decodeFromString<ResponsesErrorEnvelope>(body).error
-            } catch (_: SerializationException) {
-                null
-            }
+            val error = decodeError(body)
             throw OpenAiResponsesException(error?.message ?: "OpenAI returned HTTP $status", status, requestId, error?.code)
         }
 
@@ -151,16 +147,24 @@ class OpenAiResponsesProvider(
                     !completed
                 }.collect { emit(it) }
         } catch (cause: SseResponseException) {
+            val error = cause.errorBody?.let(::decodeError)
             throw OpenAiResponsesException(
-                cause.message ?: "Invalid OpenAI SSE response",
+                error?.message ?: cause.message ?: "Invalid OpenAI SSE response",
                 cause.head.status.value,
                 cause.head.headers["x-request-id"],
-                cause = cause,
+                error?.code,
+                cause,
             )
         }
         if (!completed) {
             throw OpenAiResponsesException("OpenAI stream ended before response.completed", 200, null)
         }
+    }
+
+    private fun decodeError(body: String): ResponsesError? = try {
+        json.decodeFromString<ResponsesErrorEnvelope>(body).error
+    } catch (_: SerializationException) {
+        null
     }
 
     private fun HttpRequestBuilder.configureRequest(payload: ResponsesRequest) {
